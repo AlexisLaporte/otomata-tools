@@ -17,10 +17,10 @@ Secrets are loaded in this order:
 
 ### Required secrets
 
-| Secret | Description |
-|--------|-------------|
-| `GOOGLE_SERVICE_ACCOUNT` | Google service account JSON (as string) |
-| `NOTION_API_KEY` | Notion integration token |
+| Secret | Description | Setup guide |
+|--------|-------------|-------------|
+| `GOOGLE_SERVICE_ACCOUNT` | Google service account JSON (as string) | [Setup guide](docs/google-service-account-setup.md) |
+| `NOTION_API_KEY` | Notion integration token | [Notion integrations](https://www.notion.so/my-integrations) |
 
 ### Example `.env.local`
 
