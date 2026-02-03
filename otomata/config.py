@@ -115,3 +115,24 @@ def require_secret(name: str) -> str:
             f"  - User config: ~/.config/otomata/{name.lower()}"
         )
     return value
+
+
+def get_config_dir() -> Path:
+    """Get otomata config directory (~/.config/otomata/)."""
+    config_dir = Path.home() / ".config" / "otomata"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir
+
+
+def get_cache_dir() -> Path:
+    """Get otomata cache directory (~/.cache/otomata/)."""
+    cache_dir = Path.home() / ".cache" / "otomata"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def get_sessions_dir() -> Path:
+    """Get browser sessions directory (~/.config/otomata/sessions/)."""
+    sessions_dir = get_config_dir() / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    return sessions_dir

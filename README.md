@@ -5,7 +5,10 @@ CLI tools for automating tasks with Google Workspace, Notion, and more.
 ## Installation
 
 ```bash
-# Recommended: install with pipx
+# For 321founded team
+pipx install git+https://github.com/321founded/otomata-tools.git
+
+# From source repo
 pipx install git+https://github.com/AlexisLaporte/otomata-tools.git
 
 # Verify

@@ -1,0 +1,597 @@
+"""
+LinkedIn Client - Browser automation for LinkedIn with rate limiting.
+
+Requires browser optional dependency: pip install otomata[browser]
+"""
+
+import asyncio
+import json
+import os
+import random
+import re
+import time
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+from urllib.parse import quote
+
+from ..common.rate_limiter import LinkedInRateLimiter
+from ...config import get_sessions_dir
+
+
+# Semaphore: max concurrent sessions PER IDENTITY
+MAX_SESSIONS_PER_IDENTITY = 3
+SEMAPHORE_DIR = Path("/tmp/linkedin_sessions")
+
+
+class LinkedInClient:
+    """
+    LinkedIn automation client with:
+    - Cookie-based authentication
+    - Rate limiting (10/h, 80/day profile visits for free accounts)
+    - Identity management
+    - Company and profile scraping
+    """
+
+    def __init__(
+        self,
+        cookie: str = None,
+        identity: str = "default",
+        headless: bool = True,
+        rate_limit: bool = True,
+        account_type: str = "free",
+        user_agent: str = None,
+    ):
+        """
+        Initialize LinkedIn client.
+
+        Args:
+            cookie: li_at cookie value (or set LINKEDIN_COOKIE env var)
+            identity: Identity name for rate limiting separation
+            headless: Run browser in headless mode
+            rate_limit: Enforce rate limiting
+            account_type: Account type for rate limits (free, premium, sales_navigator)
+            user_agent: Custom user agent
+        """
+        self.identity = identity
+        self.headless = headless
+        self.rate_limit_enabled = rate_limit
+        self.account_type = account_type
+        self.user_agent = user_agent
+
+        # Get cookie from arg or env
+        self.cookie = cookie or os.environ.get("LINKEDIN_COOKIE")
+        if not self.cookie:
+            # Try to load from session file
+            session_file = get_sessions_dir() / "linkedin.json"
+            if session_file.exists():
+                data = json.loads(session_file.read_text())
+                self.cookie = data.get("cookie") or data.get("li_at")
+                self.user_agent = self.user_agent or data.get("user_agent")
+
+        if not self.cookie:
+            raise ValueError(
+                "LinkedIn cookie required. Provide via:\n"
+                "  - cookie parameter\n"
+                "  - LINKEDIN_COOKIE env var\n"
+                "  - ~/.config/otomata/sessions/linkedin.json"
+            )
+
+        self._rate_limiters = {}
+        self._slot_file = None
+
+        # Browser instances (lazy init)
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+
+    def _get_rate_limiter(self, action_type: str) -> LinkedInRateLimiter:
+        """Get or create a rate limiter for the given action type."""
+        if action_type not in self._rate_limiters:
+            self._rate_limiters[action_type] = LinkedInRateLimiter(
+                identity=self.identity,
+                action_type=action_type,
+                account_type=self.account_type,
+            )
+        return self._rate_limiters[action_type]
+
+    def _acquire_slot(self):
+        """Acquire a session slot for this identity (limit concurrent sessions)."""
+        SEMAPHORE_DIR.mkdir(exist_ok=True)
+
+        # Clean stale slots (older than 10 minutes)
+        for slot_file in SEMAPHORE_DIR.glob("slot_*"):
+            try:
+                if time.time() - slot_file.stat().st_mtime > 600:
+                    slot_file.unlink()
+            except Exception:
+                pass
+
+        # Try to acquire a slot for this identity
+        for i in range(MAX_SESSIONS_PER_IDENTITY):
+            slot_path = SEMAPHORE_DIR / f"slot_{self.identity}_{i}"
+            try:
+                fd = os.open(slot_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                self._slot_file = slot_path
+                return
+            except FileExistsError:
+                continue
+
+        raise RuntimeError(
+            f"Identity '{self.identity}' already has {MAX_SESSIONS_PER_IDENTITY} active session(s). "
+            f"Wait or use a different identity."
+        )
+
+    def _release_slot(self):
+        """Release the session slot."""
+        if self._slot_file and self._slot_file.exists():
+            try:
+                self._slot_file.unlink()
+            except Exception:
+                pass
+        self._slot_file = None
+
+    async def __aenter__(self):
+        """Start browser and inject LinkedIn cookie."""
+        try:
+            from patchright.async_api import async_playwright
+        except ImportError:
+            raise ImportError(
+                "Browser automation requires patchright. Install with: pip install otomata[browser]"
+            )
+
+        self._acquire_slot()
+
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=self.headless)
+
+        context_options = {"viewport": {"width": 1920, "height": 1080}}
+        if self.user_agent:
+            context_options["user_agent"] = self.user_agent
+
+        self.context = await self.browser.new_context(**context_options)
+        self.page = await self.context.new_page()
+
+        # Inject LinkedIn cookie
+        await self.context.add_cookies([{
+            "name": "li_at",
+            "value": self.cookie,
+            "domain": ".linkedin.com",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "None"
+        }])
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Close browser and release slot."""
+        try:
+            if self.page:
+                await self.page.close()
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+        finally:
+            self._release_slot()
+
+    async def goto(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 20000) -> bool:
+        """Navigate to URL."""
+        if not self.page:
+            raise RuntimeError("Page not initialized")
+
+        try:
+            response = await self.page.goto(url, wait_until=wait_until, timeout=timeout)
+            return response and response.status == 200
+        except Exception as e:
+            print(f"Navigation error: {e}")
+            return False
+
+    async def wait(self, seconds: float):
+        """Wait for specified seconds."""
+        await asyncio.sleep(seconds)
+
+    async def check_rate_limit(self, action_type: str = "profile_visit"):
+        """Check and enforce rate limiting."""
+        if not self.rate_limit_enabled:
+            return
+
+        limiter = self._get_rate_limiter(action_type)
+        can_proceed, wait_time, reason = limiter.can_make_request()
+
+        if not can_proceed:
+            if reason == "outside_active_hours":
+                raise RuntimeError(
+                    f"Outside active hours for {action_type}. "
+                    f"Resume at {limiter.next_active_time()}"
+                )
+
+            if reason == "random_skip":
+                jitter = random.randint(30, 90)
+                print(f"🎲 Random skip ({action_type}): waiting {jitter}s")
+                await asyncio.sleep(jitter)
+                return
+
+            if wait_time < 300:
+                print(f"⏳ Rate limit ({action_type}/{reason}): waiting {wait_time}s")
+                await asyncio.sleep(wait_time)
+            else:
+                raise RuntimeError(
+                    f"Rate limit exceeded for {action_type}. Wait {wait_time}s "
+                    f"(until {limiter.can_make_request_at()})"
+                )
+
+        limiter.record_request()
+
+    async def scrape_company(self, url: str) -> dict:
+        """
+        Scrape LinkedIn company page.
+
+        Returns:
+            {url, name, tagline, about, website, phone, industry, size, founded, headquarters, company_id}
+        """
+        await self.check_rate_limit("company_scrape")
+
+        about_url = url.rstrip("/") + "/about/"
+        await self.goto(about_url)
+        await self.wait(2)
+
+        data = {"url": url}
+
+        # Extract company ID
+        html = await self.page.content()
+        match = re.search(r"urn:li:fs_normalized_company:(\d+)", html)
+        if match:
+            data["company_id"] = match.group(1)
+
+        # Company name
+        h1 = await self.page.query_selector("h1")
+        if h1:
+            data["name"] = (await h1.inner_text()).strip()
+
+        # Tagline
+        tagline = await self.page.query_selector(".org-top-card-summary__tagline")
+        if tagline:
+            data["tagline"] = (await tagline.inner_text()).strip()
+
+        # About text
+        for selector in ["p.break-words", '[data-test-id="about-us__description"]']:
+            el = await self.page.query_selector(selector)
+            if el:
+                text = (await el.inner_text()).strip()
+                if len(text) > 50:
+                    data["about"] = text
+                    break
+
+        # Extract dt/dd pairs
+        dt_elements = await self.page.query_selector_all("dt")
+        for dt in dt_elements:
+            label = (await dt.inner_text()).strip().lower()
+            dd = await dt.evaluate_handle("el => el.nextElementSibling")
+            if dd:
+                value = (await dd.inner_text()).strip()
+
+                if "site web" in label or "website" in label:
+                    data["website"] = value
+                elif "téléphone" in label or "phone" in label:
+                    data["phone"] = value.split("\n")[0]
+                elif "secteur" in label or "industry" in label:
+                    data["industry"] = value
+                elif "taille" in label or "company size" in label:
+                    data["size"] = value.split("\n")[0]
+                elif "fondée" in label or "founded" in label:
+                    data["founded"] = value
+                elif "siège" in label or "headquarters" in label:
+                    data["headquarters"] = value
+
+        return data
+
+    async def scrape_profile(self, url: str) -> dict:
+        """
+        Scrape LinkedIn profile page.
+
+        Returns:
+            {url, name, headline, location, about}
+        """
+        await self.check_rate_limit("profile_visit")
+
+        await self.goto(url)
+        await self.wait(2)
+
+        data = {"url": url}
+
+        # Name
+        name_selectors = [
+            "h1.text-heading-xlarge",
+            "h1.inline.t-24",
+            ".pv-text-details__left-panel h1",
+            "h1",
+        ]
+        for selector in name_selectors:
+            name_el = await self.page.query_selector(selector)
+            if name_el:
+                name = (await name_el.inner_text()).strip()
+                if name and len(name) > 1:
+                    data["name"] = name
+                    break
+
+        # Headline
+        headline_selectors = [
+            ".text-body-medium.break-words",
+            ".pv-text-details__left-panel .text-body-medium",
+        ]
+        for selector in headline_selectors:
+            headline = await self.page.query_selector(selector)
+            if headline:
+                text = (await headline.inner_text()).strip()
+                if text and len(text) > 3:
+                    data["headline"] = text
+                    break
+
+        # Location
+        location_selectors = [
+            ".text-body-small.inline.t-black--light.break-words",
+            ".pv-text-details__left-panel .text-body-small",
+        ]
+        for selector in location_selectors:
+            location = await self.page.query_selector(selector)
+            if location:
+                text = (await location.inner_text()).strip()
+                if text:
+                    data["location"] = text
+                    break
+
+        # About section
+        about = await self.page.query_selector("#about ~ div .inline-show-more-text")
+        if about:
+            data["about"] = (await about.inner_text()).strip()
+
+        return data
+
+    async def get_company_id(self, company_slug: str) -> Optional[str]:
+        """Get numeric company ID from slug."""
+        await self.check_rate_limit("company_scrape")
+
+        url = f"https://www.linkedin.com/company/{company_slug}/"
+        await self.goto(url)
+        await self.wait(2)
+
+        html = await self.page.content()
+        match = re.search(r"urn:li:fs_normalized_company:(\d+)", html)
+        return match.group(1) if match else None
+
+    async def search_employees(
+        self, company_slug: str, keywords: List[str] = None, limit: int = 10
+    ) -> List[dict]:
+        """
+        Search employees via LinkedIn search with company filter.
+
+        Args:
+            company_slug: LinkedIn company slug
+            keywords: Title keywords to search
+            limit: Max employees to return
+
+        Returns:
+            List of {name, headline, linkedin}
+        """
+        company_id = await self.get_company_id(company_slug)
+        if not company_id:
+            return []
+
+        await self.check_rate_limit("search_export")
+
+        kw_str = " OR ".join(keywords) if keywords else ""
+        search_url = f'https://www.linkedin.com/search/results/people/?currentCompany=%5B%22{company_id}%22%5D&keywords={quote(kw_str)}&origin=FACETED_SEARCH'
+
+        await self.goto(search_url)
+        await self.wait(4)
+
+        # Scroll to load results
+        for i in range(8):
+            await self.page.evaluate(f"window.scrollTo(0, {(i+1) * 400})")
+            await self.wait(1.5)
+
+        employees = []
+        seen_urls = set()
+        seen_names = set()
+
+        links = await self.page.query_selector_all('a[href*="/in/"]')
+
+        for link in links:
+            if len(employees) >= limit:
+                break
+
+            href = await link.get_attribute("href")
+            if not href:
+                continue
+
+            url = href.split("?")[0]
+            if url in seen_urls or "/in/" not in url:
+                continue
+
+            text = await link.inner_text()
+            if not text or len(text.strip()) < 3:
+                continue
+
+            lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+            if len(lines) < 3:
+                continue
+
+            name = re.sub(r"\s*•.*$", "", lines[0]).strip()
+            if len(name) < 3 or name.lower() in ["voir", "view", "message", "suivre", "follow"]:
+                continue
+
+            seen_urls.add(url)
+
+            name_lower = name.lower()
+            if name_lower in seen_names:
+                continue
+            seen_names.add(name_lower)
+
+            # Find headline
+            headline = ""
+            for line in lines[1:]:
+                line_stripped = line.strip()
+                if re.match(r"^•\s*\d*(st|nd|rd|th|er?|e)?\+?", line_stripped, re.IGNORECASE):
+                    continue
+                if line_stripped.lower() in ["message", "suivre", "follow", "se connecter", "connect"]:
+                    continue
+                headline = line_stripped
+                break
+
+            employees.append({
+                "name": name,
+                "headline": headline,
+                "linkedin": url
+            })
+
+        return employees
+
+    async def get_company_people(self, company_slug: str, limit: int = 20) -> List[dict]:
+        """
+        Get employees from company's People page (sorted by relevance).
+
+        Args:
+            company_slug: LinkedIn company slug
+            limit: Max employees to return
+
+        Returns:
+            List of {name, headline, linkedin}
+        """
+        await self.check_rate_limit("search_export")
+
+        people_url = f"https://www.linkedin.com/company/{company_slug}/people/"
+        await self.goto(people_url)
+        await self.wait(3)
+
+        # Load more results
+        for _ in range(limit // 12 + 1):
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.wait(1)
+
+            show_more = await self.page.query_selector("button.scaffold-finite-scroll__load-button")
+            if show_more:
+                try:
+                    await show_more.click()
+                    await self.wait(2)
+                except:
+                    break
+            else:
+                break
+
+        employees = []
+        seen_urls = set()
+
+        cards = await self.page.query_selector_all("li.org-people-profile-card__profile-card-spacing")
+
+        for card in cards:
+            if len(employees) >= limit:
+                break
+
+            link = await card.query_selector('a[href*="/in/"]')
+            if not link:
+                continue
+
+            href = await link.get_attribute("href")
+            if not href:
+                continue
+
+            url = href.split("?")[0]
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            name = ""
+            name_el = await card.query_selector(".artdeco-entity-lockup__title")
+            if name_el:
+                name = (await name_el.inner_text()).strip()
+                name = re.sub(r"\s*·\s*\d*(er?|e|st|nd|rd|th)?\+?$", "", name).strip()
+
+            if not name or len(name) < 2:
+                continue
+
+            headline = ""
+            headline_el = await card.query_selector(".artdeco-entity-lockup__subtitle")
+            if headline_el:
+                headline = (await headline_el.inner_text()).strip()
+
+            employees.append({
+                "name": name,
+                "headline": headline,
+                "linkedin": url
+            })
+
+        return employees
+
+    async def search_companies(self, query: str, limit: int = 5) -> List[dict]:
+        """
+        Search companies on LinkedIn.
+
+        Returns:
+            List of {name, slug, url, headline}
+        """
+        await self.check_rate_limit("search_export")
+
+        search_url = f"https://www.linkedin.com/search/results/companies/?keywords={quote(query)}&origin=SWITCH_SEARCH_VERTICAL"
+        await self.goto(search_url)
+        await self.wait(3)
+
+        for i in range(3):
+            await self.page.evaluate(f"window.scrollTo(0, {(i+1) * 400})")
+            await self.wait(1)
+
+        companies = []
+        seen_slugs = set()
+
+        cards = await self.page.query_selector_all("[data-chameleon-result-urn]")
+
+        for card in cards:
+            if len(companies) >= limit:
+                break
+
+            link = await card.query_selector('a[href*="/company/"]')
+            if not link:
+                continue
+
+            href = await link.get_attribute("href")
+            if not href or "/company/" not in href:
+                continue
+
+            match = re.search(r"/company/([^/?]+)", href)
+            if not match:
+                continue
+
+            slug = match.group(1)
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+
+            url = f"https://www.linkedin.com/company/{slug}/"
+
+            name = ""
+            name_el = await card.query_selector(".t-roman")
+            if name_el:
+                name = (await name_el.inner_text()).strip()
+
+            if not name:
+                continue
+
+            headline = ""
+            headline_el = await card.query_selector(".t-black--light")
+            if headline_el:
+                headline = (await headline_el.inner_text()).strip()
+
+            companies.append({
+                "name": name,
+                "slug": slug,
+                "url": url,
+                "headline": headline
+            })
+
+        return companies

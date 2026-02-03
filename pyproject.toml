@@ -21,6 +21,34 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+browser = [
+    "patchright>=1.0.0",
+]
+marketing = [
+    "requests>=2.28.0",
+]
+crm = [
+    "requests>=2.28.0",
+]
+communication = [
+    "requests>=2.28.0",
+    "resend>=0.7.0",
+]
+company-fr = [
+    "requests>=2.28.0",
+]
+search = [
+    "requests>=2.28.0",
+]
+media = [
+    "requests>=2.28.0",
+]
+ai = [
+    "anthropic>=0.40.0",
+]
+all = [
+    "otomata[browser,marketing,crm,communication,company-fr,search,media,ai]",
+]
 dev = [
     "pytest>=7.0.0",
     "black",

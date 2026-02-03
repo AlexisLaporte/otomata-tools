@@ -46,6 +46,10 @@ python -m pipx ensurepath
 ## Install otomata-tools
 
 ```bash
+# For 321founded team
+pipx install git+https://github.com/321founded/otomata-tools.git
+
+# From source repo
 pipx install git+https://github.com/AlexisLaporte/otomata-tools.git
 ```
 
