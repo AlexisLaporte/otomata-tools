@@ -127,6 +127,25 @@ otomata google drive-list --query "mimeType='application/vnd.google-apps.folder'
 | `404 Not Found` | Invalid file ID | Verify the ID exists and is shared |
 | `API not enabled` | API disabled in GCP | Enable the API in Google Cloud Console |
 
+## Team-Scoped Access (Shared Drive Only)
+
+To create a service account that **only** has access to a specific Shared Drive (e.g., for a team or project):
+
+1. **Create a dedicated GCP project** for the team (e.g., `321founded-ekinox`)
+2. **Create the service account** in that project (e.g., `memento-ekinox@321founded-ekinox.iam.gserviceaccount.com`)
+3. **Share only the target Shared Drive** with the service account email
+4. **Do NOT share** any personal drives, folders, or other resources
+
+The service account will only see files in the Shared Drive it was invited to. This provides natural isolation without any additional configuration.
+
+**Example use case:**
+- Team: Ekinox
+- GCP Project: `321founded-ekinox`
+- Service Account: `memento-ekinox@321founded-ekinox.iam.gserviceaccount.com`
+- Access: Only "Ekinox" Shared Drive (shared as Content Manager)
+
+Team members share the same `.env.local` with this service account, ensuring everyone has identical (and limited) access.
+
 ## Security Notes
 
 - Never commit the JSON key to git (add `*.json` to `.gitignore`)
