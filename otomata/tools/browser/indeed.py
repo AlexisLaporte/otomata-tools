@@ -1,16 +1,17 @@
 """
 Indeed Client - Browser automation for job scraping.
 
-Requires browser optional dependency: pip install otomata[browser]
+Inherits from BrowserClient for browser management.
 """
 
-import asyncio
-import re
-from typing import Optional, List, Dict, Any
+import random
+from typing import List, Dict, Any
 from urllib.parse import urlencode
 
+from .lib.browser_client import BrowserClient
 
-class IndeedClient:
+
+class IndeedClient(BrowserClient):
     """
     Indeed job scraping client.
 
@@ -45,64 +46,19 @@ class IndeedClient:
             country: Country code (fr, us, uk, de)
             headless: Run browser in headless mode
         """
-        self.country = country
-        self.base_url = self.BASE_URLS.get(country, self.BASE_URLS["fr"])
-        self.headless = headless
-        self._request_count = 0
-
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
-
-    async def __aenter__(self):
-        """Start browser."""
-        try:
-            from patchright.async_api import async_playwright
-        except ImportError:
-            raise ImportError(
-                "Browser automation requires patchright. Install with: pip install otomata[browser]"
-            )
-
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=self.headless)
-
-        self.context = await self.browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=self.DEFAULT_USER_AGENT
+        super().__init__(
+            headless=headless,
+            user_agent=self.DEFAULT_USER_AGENT,
         )
 
-        self.page = await self.context.new_page()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close browser."""
-        if self.page:
-            await self.page.close()
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-
-    async def wait(self, seconds: float):
-        """Wait for specified seconds."""
-        await asyncio.sleep(seconds)
-
-    async def goto(self, url: str, wait_until: str = "networkidle", timeout: int = 30000) -> bool:
-        """Navigate to URL."""
-        try:
-            await self.page.goto(url, wait_until=wait_until, timeout=timeout)
-            return True
-        except:
-            return False
+        self.country = country
+        self.base_url = self.BASE_URLS.get(country, self.BASE_URLS["fr"])
+        self._request_count = 0
 
     async def _rate_limit_wait(self):
         """Wait between requests."""
         self._request_count += 1
         if self._request_count > 1:
-            import random
             wait = random.uniform(2, 4)
             await self.wait(wait)
 
@@ -116,7 +72,7 @@ class IndeedClient:
             ]
             for selector in selectors:
                 try:
-                    btn = await self.page.wait_for_selector(selector, timeout=2000)
+                    btn = await self.wait_for_selector(selector, timeout=2000)
                     if btn:
                         await btn.click()
                         await self.wait(1)
@@ -169,7 +125,7 @@ class IndeedClient:
 
         while len(jobs) < max_results and pages_scraped < max_pages:
             try:
-                await self.page.wait_for_selector('[data-testid="jobTitle"], .jobTitle', timeout=10000)
+                await self.wait_for_selector('[data-testid="jobTitle"], .jobTitle', timeout=10000)
             except:
                 break
 
@@ -196,9 +152,9 @@ class IndeedClient:
     async def _scroll_page(self):
         """Scroll page to load lazy content."""
         for i in range(5):
-            await self.page.evaluate(f"window.scrollTo(0, {(i + 1) * 500})")
+            await self.scroll_by((i + 1) * 500)
             await self.wait(0.5)
-        await self.page.evaluate("window.scrollTo(0, 0)")
+        await self.evaluate("window.scrollTo(0, 0)")
         await self.wait(0.5)
 
     async def _extract_jobs_from_page(self) -> List[Dict[str, Any]]:
@@ -209,7 +165,7 @@ class IndeedClient:
         cards = []
 
         for selector in card_selectors:
-            cards = await self.page.query_selector_all(selector)
+            cards = await self.query_selector_all(selector)
             if cards:
                 break
 
@@ -285,7 +241,7 @@ class IndeedClient:
 
             for selector in next_selectors:
                 try:
-                    next_btn = await self.page.query_selector(selector)
+                    next_btn = await self.query_selector(selector)
                     if next_btn:
                         await next_btn.click()
                         await self.wait(2)
@@ -307,19 +263,19 @@ class IndeedClient:
 
         job = {"url": job_url}
 
-        title_el = await self.page.query_selector('[data-testid="jobsearch-JobInfoHeader-title"]')
+        title_el = await self.query_selector('[data-testid="jobsearch-JobInfoHeader-title"]')
         if title_el:
             job["title"] = (await title_el.inner_text()).strip()
 
-        company_el = await self.page.query_selector('[data-testid="inlineHeader-companyName"]')
+        company_el = await self.query_selector('[data-testid="inlineHeader-companyName"]')
         if company_el:
             job["company"] = (await company_el.inner_text()).strip()
 
-        location_el = await self.page.query_selector('[data-testid="job-location"]')
+        location_el = await self.query_selector('[data-testid="job-location"]')
         if location_el:
             job["location"] = (await location_el.inner_text()).strip()
 
-        desc_el = await self.page.query_selector("#jobDescriptionText")
+        desc_el = await self.query_selector("#jobDescriptionText")
         if desc_el:
             job["full_description"] = (await desc_el.inner_text()).strip()
 

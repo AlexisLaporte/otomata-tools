@@ -1,17 +1,17 @@
 """
 Pappers Client - Browser automation for French company data from pappers.fr
 
-Requires browser optional dependency: pip install otomata[browser]
+Inherits from BrowserClient for browser management.
 """
 
-import asyncio
 import re
 from typing import Optional, Dict, Any, List
 
+from .lib.browser_client import BrowserClient
 from ...config import get_secret
 
 
-class PappersClient:
+class PappersClient(BrowserClient):
     """
     Pappers.fr scraping client for French company legal data.
 
@@ -34,45 +34,22 @@ class PappersClient:
             headless: Run browser in headless mode
             api_key: Pappers API key (optional, for URL resolution)
         """
-        self.headless = headless
-        self.api_key = api_key or get_secret("PAPPERS_API_KEY")
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
-        self._cartographie_data = None
-
-    async def __aenter__(self):
-        """Start browser with anti-detection settings."""
-        try:
-            from patchright.async_api import async_playwright
-        except ImportError:
-            raise ImportError(
-                "Browser automation requires patchright. Install with: pip install otomata[browser]"
-            )
-
-        self.playwright = await async_playwright().start()
-
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ]
-        )
-
-        self.context = await self.browser.new_context(
-            viewport={"width": 1920, "height": 1080},
+        super().__init__(
+            headless=headless,
             locale="fr-FR",
             timezone_id="Europe/Paris",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
 
-        self.page = await self.context.new_page()
+        self.api_key = api_key or get_secret("PAPPERS_API_KEY")
+        self._cartographie_data = None
+
+    async def start(self):
+        """Start browser and setup response interception."""
+        await super().start()
 
         # Intercept cartographie API responses
-        async def handle_response(response):
+        async def handle_cartographie(response):
             url = response.url
             if "cartographie" in url.lower() and response.status == 200:
                 try:
@@ -80,33 +57,8 @@ class PappersClient:
                 except:
                     pass
 
-        self.page.on("response", handle_response)
-
+        self.on_response(handle_cartographie)
         return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Cleanup browser."""
-        if self.page:
-            await self.page.close()
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-
-    async def goto(self, url: str, timeout: int = 30000) -> bool:
-        """Navigate to URL."""
-        try:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            return True
-        except Exception as e:
-            print(f"Navigation error: {e}")
-            return False
-
-    async def wait(self, seconds: float) -> None:
-        """Wait for specified seconds."""
-        await asyncio.sleep(seconds)
 
     async def _wait_for_cloudflare(self, max_wait: int = 15) -> bool:
         """Wait for Cloudflare challenge to resolve."""
@@ -196,7 +148,7 @@ class PappersClient:
 
         try:
             # Company name
-            name_el = await self.page.query_selector("h1, .company-name")
+            name_el = await self.query_selector("h1, .company-name")
             if name_el:
                 data["identite"]["nom"] = await name_el.inner_text()
 
@@ -212,7 +164,7 @@ class PappersClient:
 
     async def _extract_identity_section(self, data: Dict) -> None:
         """Extract identity/legal info section."""
-        identite = await self.page.evaluate('''
+        identite = await self.evaluate('''
             () => {
                 const info = {};
                 const cardText = document.body.textContent;
@@ -240,7 +192,7 @@ class PappersClient:
 
     async def _extract_dirigeants(self, data: Dict) -> None:
         """Extract company executives/directors."""
-        dirigeants_list = await self.page.evaluate('''
+        dirigeants_list = await self.evaluate('''
             () => {
                 const dirigeants = [];
                 const section = document.querySelector('section#dirigeants, section[data-id="dirigeants"]');
@@ -271,7 +223,7 @@ class PappersClient:
 
     async def _extract_finances(self, data: Dict) -> None:
         """Extract financial data."""
-        finances = await self.page.evaluate('''
+        finances = await self.evaluate('''
             () => {
                 const metrics = {};
                 const section = document.querySelector('section#finances, section[data-id="finances"]');
@@ -303,7 +255,7 @@ class PappersClient:
 
     async def _extract_etablissements(self, data: Dict) -> None:
         """Extract company establishments."""
-        etablissements = await self.page.evaluate('''
+        etablissements = await self.evaluate('''
             () => {
                 const etabs = [];
                 const section = document.querySelector('section#etablissements');
@@ -361,7 +313,7 @@ class PappersClient:
         results = []
         seen_sirens = set()
 
-        result_items = await self.page.query_selector_all('a[href*="/entreprise/"]')
+        result_items = await self.query_selector_all('a[href*="/entreprise/"]')
 
         for item in result_items:
             if len(results) >= limit:

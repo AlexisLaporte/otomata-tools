@@ -1,7 +1,7 @@
 """
 LinkedIn Client - Browser automation for LinkedIn with rate limiting.
 
-Requires browser optional dependency: pip install otomata[browser]
+Inherits from BrowserClient for browser management.
 """
 
 import asyncio
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote
 
+from .lib.browser_client import BrowserClient
 from ..common.rate_limiter import LinkedInRateLimiter
 from ...config import get_sessions_dir
 
@@ -23,12 +24,12 @@ MAX_SESSIONS_PER_IDENTITY = 3
 SEMAPHORE_DIR = Path("/tmp/linkedin_sessions")
 
 
-class LinkedInClient:
+class LinkedInClient(BrowserClient):
     """
     LinkedIn automation client with:
     - Cookie-based authentication
     - Rate limiting (10/h, 80/day profile visits for free accounts)
-    - Identity management
+    - Identity management for multi-account support
     - Company and profile scraping
     """
 
@@ -53,22 +54,21 @@ class LinkedInClient:
             user_agent: Custom user agent
         """
         self.identity = identity
-        self.headless = headless
         self.rate_limit_enabled = rate_limit
         self.account_type = account_type
-        self.user_agent = user_agent
 
-        # Get cookie from arg or env
-        self.cookie = cookie or os.environ.get("LINKEDIN_COOKIE")
-        if not self.cookie:
-            # Try to load from session file
+        # Get cookie from arg or env or session file
+        self._li_at_cookie = cookie or os.environ.get("LINKEDIN_COOKIE")
+        resolved_user_agent = user_agent
+
+        if not self._li_at_cookie:
             session_file = get_sessions_dir() / "linkedin.json"
             if session_file.exists():
                 data = json.loads(session_file.read_text())
-                self.cookie = data.get("cookie") or data.get("li_at")
-                self.user_agent = self.user_agent or data.get("user_agent")
+                self._li_at_cookie = data.get("cookie") or data.get("li_at")
+                resolved_user_agent = resolved_user_agent or data.get("user_agent")
 
-        if not self.cookie:
+        if not self._li_at_cookie:
             raise ValueError(
                 "LinkedIn cookie required. Provide via:\n"
                 "  - cookie parameter\n"
@@ -76,14 +76,15 @@ class LinkedInClient:
                 "  - ~/.config/otomata/sessions/linkedin.json"
             )
 
+        # Initialize base BrowserClient
+        super().__init__(
+            headless=headless,
+            viewport=(1920, 1080),
+            user_agent=resolved_user_agent,
+        )
+
         self._rate_limiters = {}
         self._slot_file = None
-
-        # Browser instances (lazy init)
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
 
     def _get_rate_limiter(self, action_type: str) -> LinkedInRateLimiter:
         """Get or create a rate limiter for the given action type."""
@@ -134,30 +135,16 @@ class LinkedInClient:
         self._slot_file = None
 
     async def __aenter__(self):
-        """Start browser and inject LinkedIn cookie."""
-        try:
-            from patchright.async_api import async_playwright
-        except ImportError:
-            raise ImportError(
-                "Browser automation requires patchright. Install with: pip install otomata[browser]"
-            )
-
+        """Start browser, acquire slot, and inject LinkedIn cookie."""
         self._acquire_slot()
 
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=self.headless)
-
-        context_options = {"viewport": {"width": 1920, "height": 1080}}
-        if self.user_agent:
-            context_options["user_agent"] = self.user_agent
-
-        self.context = await self.browser.new_context(**context_options)
-        self.page = await self.context.new_page()
+        # Start browser via parent
+        await super().start()
 
         # Inject LinkedIn cookie
-        await self.context.add_cookies([{
+        await self.add_cookies([{
             "name": "li_at",
-            "value": self.cookie,
+            "value": self._li_at_cookie,
             "domain": ".linkedin.com",
             "path": "/",
             "httpOnly": True,
@@ -170,32 +157,9 @@ class LinkedInClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close browser and release slot."""
         try:
-            if self.page:
-                await self.page.close()
-            if self.context:
-                await self.context.close()
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
+            await super().close()
         finally:
             self._release_slot()
-
-    async def goto(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 20000) -> bool:
-        """Navigate to URL."""
-        if not self.page:
-            raise RuntimeError("Page not initialized")
-
-        try:
-            response = await self.page.goto(url, wait_until=wait_until, timeout=timeout)
-            return response and response.status == 200
-        except Exception as e:
-            print(f"Navigation error: {e}")
-            return False
-
-    async def wait(self, seconds: float):
-        """Wait for specified seconds."""
-        await asyncio.sleep(seconds)
 
     async def check_rate_limit(self, action_type: str = "profile_visit"):
         """Check and enforce rate limiting."""
@@ -214,12 +178,12 @@ class LinkedInClient:
 
             if reason == "random_skip":
                 jitter = random.randint(30, 90)
-                print(f"🎲 Random skip ({action_type}): waiting {jitter}s")
+                print(f"Random skip ({action_type}): waiting {jitter}s")
                 await asyncio.sleep(jitter)
                 return
 
             if wait_time < 300:
-                print(f"⏳ Rate limit ({action_type}/{reason}): waiting {wait_time}s")
+                print(f"Rate limit ({action_type}/{reason}): waiting {wait_time}s")
                 await asyncio.sleep(wait_time)
             else:
                 raise RuntimeError(
@@ -245,24 +209,24 @@ class LinkedInClient:
         data = {"url": url}
 
         # Extract company ID
-        html = await self.page.content()
+        html = await self.get_html()
         match = re.search(r"urn:li:fs_normalized_company:(\d+)", html)
         if match:
             data["company_id"] = match.group(1)
 
         # Company name
-        h1 = await self.page.query_selector("h1")
+        h1 = await self.query_selector("h1")
         if h1:
             data["name"] = (await h1.inner_text()).strip()
 
         # Tagline
-        tagline = await self.page.query_selector(".org-top-card-summary__tagline")
+        tagline = await self.query_selector(".org-top-card-summary__tagline")
         if tagline:
             data["tagline"] = (await tagline.inner_text()).strip()
 
         # About text
         for selector in ["p.break-words", '[data-test-id="about-us__description"]']:
-            el = await self.page.query_selector(selector)
+            el = await self.query_selector(selector)
             if el:
                 text = (await el.inner_text()).strip()
                 if len(text) > 50:
@@ -270,7 +234,7 @@ class LinkedInClient:
                     break
 
         # Extract dt/dd pairs
-        dt_elements = await self.page.query_selector_all("dt")
+        dt_elements = await self.query_selector_all("dt")
         for dt in dt_elements:
             label = (await dt.inner_text()).strip().lower()
             dd = await dt.evaluate_handle("el => el.nextElementSibling")
@@ -314,7 +278,7 @@ class LinkedInClient:
             "h1",
         ]
         for selector in name_selectors:
-            name_el = await self.page.query_selector(selector)
+            name_el = await self.query_selector(selector)
             if name_el:
                 name = (await name_el.inner_text()).strip()
                 if name and len(name) > 1:
@@ -327,7 +291,7 @@ class LinkedInClient:
             ".pv-text-details__left-panel .text-body-medium",
         ]
         for selector in headline_selectors:
-            headline = await self.page.query_selector(selector)
+            headline = await self.query_selector(selector)
             if headline:
                 text = (await headline.inner_text()).strip()
                 if text and len(text) > 3:
@@ -340,7 +304,7 @@ class LinkedInClient:
             ".pv-text-details__left-panel .text-body-small",
         ]
         for selector in location_selectors:
-            location = await self.page.query_selector(selector)
+            location = await self.query_selector(selector)
             if location:
                 text = (await location.inner_text()).strip()
                 if text:
@@ -348,7 +312,7 @@ class LinkedInClient:
                     break
 
         # About section
-        about = await self.page.query_selector("#about ~ div .inline-show-more-text")
+        about = await self.query_selector("#about ~ div .inline-show-more-text")
         if about:
             data["about"] = (await about.inner_text()).strip()
 
@@ -362,7 +326,7 @@ class LinkedInClient:
         await self.goto(url)
         await self.wait(2)
 
-        html = await self.page.content()
+        html = await self.get_html()
         match = re.search(r"urn:li:fs_normalized_company:(\d+)", html)
         return match.group(1) if match else None
 
@@ -394,14 +358,14 @@ class LinkedInClient:
 
         # Scroll to load results
         for i in range(8):
-            await self.page.evaluate(f"window.scrollTo(0, {(i+1) * 400})")
+            await self.scroll_by((i + 1) * 400)
             await self.wait(1.5)
 
         employees = []
         seen_urls = set()
         seen_names = set()
 
-        links = await self.page.query_selector_all('a[href*="/in/"]')
+        links = await self.query_selector_all('a[href*="/in/"]')
 
         for link in links:
             if len(employees) >= limit:
@@ -472,10 +436,9 @@ class LinkedInClient:
 
         # Load more results
         for _ in range(limit // 12 + 1):
-            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await self.wait(1)
+            await self.scroll_to_bottom(times=1, delay=1)
 
-            show_more = await self.page.query_selector("button.scaffold-finite-scroll__load-button")
+            show_more = await self.query_selector("button.scaffold-finite-scroll__load-button")
             if show_more:
                 try:
                     await show_more.click()
@@ -488,7 +451,7 @@ class LinkedInClient:
         employees = []
         seen_urls = set()
 
-        cards = await self.page.query_selector_all("li.org-people-profile-card__profile-card-spacing")
+        cards = await self.query_selector_all("li.org-people-profile-card__profile-card-spacing")
 
         for card in cards:
             if len(employees) >= limit:
@@ -543,13 +506,13 @@ class LinkedInClient:
         await self.wait(3)
 
         for i in range(3):
-            await self.page.evaluate(f"window.scrollTo(0, {(i+1) * 400})")
+            await self.scroll_by((i + 1) * 400)
             await self.wait(1)
 
         companies = []
         seen_slugs = set()
 
-        cards = await self.page.query_selector_all("[data-chameleon-result-urn]")
+        cards = await self.query_selector_all("[data-chameleon-result-urn]")
 
         for card in cards:
             if len(companies) >= limit:

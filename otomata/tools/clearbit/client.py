@@ -54,12 +54,8 @@ def download_logo(
     Returns:
         Dict with status, image_path, filename, domain, source
     """
-    # Logo sources in order of preference
+    # Logo sources in order of preference (public endpoints, no auth needed)
     logo_sources = [
-        {
-            "name": "Logo.dev",
-            "url": f"https://img.logo.dev/{domain}?token=pk_X-WvJk3RQQmflwLyTMHA3w&size={size}",
-        },
         {
             "name": "Google Favicon",
             "url": f"https://www.google.com/s2/favicons?domain={domain}&sz={size}",
@@ -67,6 +63,10 @@ def download_logo(
         {
             "name": "Clearbit",
             "url": f"https://logo.clearbit.com/{domain}?size={size}",
+        },
+        {
+            "name": "DuckDuckGo",
+            "url": f"https://icons.duckduckgo.com/ip3/{domain}.ico",
         }
     ]
 

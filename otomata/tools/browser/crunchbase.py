@@ -1,20 +1,20 @@
 """
 Crunchbase Client - Browser automation for Crunchbase scraping.
 
-Requires browser optional dependency: pip install otomata[browser]
+Inherits from BrowserClient for browser management.
 """
 
 import asyncio
 import json
 import re
-from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 from urllib.parse import quote
 
+from .lib.browser_client import BrowserClient
 from ...config import get_sessions_dir
 
 
-class CrunchbaseClient:
+class CrunchbaseClient(BrowserClient):
     """
     Crunchbase automation client with:
     - Cookie-based authentication
@@ -37,91 +37,28 @@ class CrunchbaseClient:
             headless: Run browser in headless mode
             user_agent: Custom user agent
         """
-        self.headless = headless
-        self.user_agent = user_agent
-        self.cookies = cookies
+        resolved_cookies = cookies
+        resolved_user_agent = user_agent
 
         # Try to load from session file if not provided
-        if not self.cookies:
+        if not resolved_cookies:
             session_file = get_sessions_dir() / "crunchbase.json"
             if session_file.exists():
                 data = json.loads(session_file.read_text())
                 if data.get("valid"):
-                    self.cookies = data.get("cookies", [])
-                    self.user_agent = self.user_agent or data.get("user_agent")
+                    resolved_cookies = data.get("cookies", [])
+                    resolved_user_agent = resolved_user_agent or data.get("user_agent")
 
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
-
-    async def __aenter__(self):
-        """Start browser and load cookies."""
-        try:
-            from patchright.async_api import async_playwright
-        except ImportError:
-            raise ImportError(
-                "Browser automation requires patchright. Install with: pip install otomata[browser]"
-            )
-
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        super().__init__(
+            headless=headless,
+            user_agent=resolved_user_agent,
+            cookies=resolved_cookies or [],
         )
-
-        context_options = {"viewport": {"width": 1920, "height": 1080}}
-        if self.user_agent:
-            context_options["user_agent"] = self.user_agent
-
-        self.context = await self.browser.new_context(**context_options)
-
-        if self.cookies:
-            formatted_cookies = []
-            for c in self.cookies:
-                cookie = {
-                    "name": c["name"],
-                    "value": c["value"],
-                    "domain": c["domain"],
-                    "path": c.get("path", "/"),
-                }
-                same_site = c.get("sameSite", "Lax")
-                if same_site and same_site.lower() in ("strict", "lax", "none"):
-                    cookie["sameSite"] = same_site.capitalize()
-                    if same_site.lower() == "none":
-                        cookie["sameSite"] = "None"
-                else:
-                    cookie["sameSite"] = "Lax"
-                formatted_cookies.append(cookie)
-            await self.context.add_cookies(formatted_cookies)
-
-        self.page = await self.context.new_page()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close browser."""
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-
-    async def goto(self, url: str, timeout: int = 30000) -> bool:
-        """Navigate to URL."""
-        try:
-            response = await self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            if response:
-                status = response.status
-                if status == 200 or (300 <= status < 400):
-                    return True
-            return False
-        except Exception as e:
-            print(f"Navigation error: {e}")
-            return False
 
     async def is_logged_in(self) -> bool:
         """Check if logged in to Crunchbase."""
         await self.goto("https://www.crunchbase.com/")
-        await asyncio.sleep(2)
+        await self.wait(2)
 
         logged_in_indicators = [
             'a[href*="/dashboard"]',
@@ -130,11 +67,11 @@ class CrunchbaseClient:
         ]
 
         for selector in logged_in_indicators:
-            el = await self.page.query_selector(selector)
+            el = await self.query_selector(selector)
             if el:
                 return True
 
-        login_btn = await self.page.query_selector('a[href*="/login"]')
+        login_btn = await self.query_selector('a[href*="/login"]')
         return login_btn is None
 
     async def get_company(self, company_slug: str) -> Dict[str, Any]:
@@ -157,7 +94,7 @@ class CrunchbaseClient:
         if not await self.goto(url):
             return {"error": "Failed to load page", "url": url}
 
-        await asyncio.sleep(3)
+        await self.wait(3)
 
         data = {
             "slug": company_slug,
@@ -177,7 +114,7 @@ class CrunchbaseClient:
         }
 
         try:
-            name_el = await self.page.query_selector(".entity-name")
+            name_el = await self.query_selector(".entity-name")
             if name_el:
                 data["name"] = (await name_el.inner_text()).strip()
             else:
@@ -185,7 +122,7 @@ class CrunchbaseClient:
                 if title and " - Crunchbase" in title:
                     data["name"] = title.split(" - Crunchbase")[0].strip()
 
-            desc_el = await self.page.query_selector(".description")
+            desc_el = await self.query_selector(".description")
             if desc_el:
                 data["description"] = (await desc_el.inner_text()).strip()
 
@@ -196,18 +133,18 @@ class CrunchbaseClient:
 
         return data
 
-    async def _extract_company_data(self, data: Dict):
+    async def _extract_company_data(self, data: Dict) -> None:
         """Extract all company data from the page."""
         try:
             # Funding
-            funding_el = await self.page.query_selector(".field-type-money")
+            funding_el = await self.query_selector(".field-type-money")
             if funding_el:
                 text = await funding_el.inner_text()
                 if text and "$" in text:
                     data["funding"]["total_raised"] = text.strip()
 
             # Investors
-            investor_links = await self.page.query_selector_all('a[href*="/organization/"]')
+            investor_links = await self.query_selector_all('a[href*="/organization/"]')
             investors_seen = set()
             for link in investor_links[:50]:
                 try:
@@ -230,7 +167,7 @@ class CrunchbaseClient:
                     continue
 
             # Key people
-            people_links = await self.page.query_selector_all('a[href*="/person/"]')
+            people_links = await self.query_selector_all('a[href*="/person/"]')
             people_seen = set()
             for link in people_links[:30]:
                 try:
@@ -248,7 +185,7 @@ class CrunchbaseClient:
                     continue
 
             # Industries
-            chips = await self.page.query_selector_all('a[href*="/hub/"] .chip-text, a[href*="/search/"] .chip-text')
+            chips = await self.query_selector_all('a[href*="/hub/"] .chip-text, a[href*="/search/"] .chip-text')
             industries = []
             for chip in chips[:15]:
                 text = (await chip.inner_text()).strip()
@@ -258,20 +195,20 @@ class CrunchbaseClient:
             data["industries"] = industries
 
             # Social links
-            linkedin_el = await self.page.query_selector('a[title="View on LinkedIn"]')
+            linkedin_el = await self.query_selector('a[title="View on LinkedIn"]')
             if linkedin_el:
                 href = await linkedin_el.get_attribute("href")
                 if href:
                     data["linkedin"] = href
 
-            twitter_el = await self.page.query_selector('a[title="View on Twitter"], a[title="View on X"]')
+            twitter_el = await self.query_selector('a[title="View on Twitter"], a[title="View on X"]')
             if twitter_el:
                 href = await twitter_el.get_attribute("href")
                 if href:
                     data["twitter"] = href
 
             # Founded
-            founded_el = await self.page.query_selector(".field-type-date_precision")
+            founded_el = await self.query_selector(".field-type-date_precision")
             if founded_el:
                 text = await founded_el.inner_text()
                 year_match = re.search(r"\b(19\d{2}|20[0-2]\d)\b", text)
@@ -279,7 +216,7 @@ class CrunchbaseClient:
                     data["founded"] = year_match.group(1)
 
             # Employee count
-            emp_links = await self.page.query_selector_all('a[href*="num_employees"]')
+            emp_links = await self.query_selector_all('a[href*="num_employees"]')
             for link in emp_links[:1]:
                 text = await link.inner_text()
                 if re.search(r"\d+-\d+|\d+\+", text):
@@ -287,7 +224,7 @@ class CrunchbaseClient:
                     break
 
             # Headquarters
-            location_links = await self.page.query_selector_all('a[href*="/location_identifiers/"]')
+            location_links = await self.query_selector_all('a[href*="/location_identifiers/"]')
             locations = []
             for link in location_links[:3]:
                 text = (await link.inner_text()).strip()
@@ -311,7 +248,7 @@ class CrunchbaseClient:
         if not await self.goto(url):
             return {"error": "Failed to load page", "url": url}
 
-        await asyncio.sleep(3)
+        await self.wait(3)
 
         data = {
             "slug": person_slug,
@@ -324,16 +261,16 @@ class CrunchbaseClient:
         }
 
         try:
-            name_el = await self.page.query_selector(".entity-name")
+            name_el = await self.query_selector(".entity-name")
             if name_el:
                 data["name"] = (await name_el.inner_text()).strip()
 
-            bio_el = await self.page.query_selector(".description")
+            bio_el = await self.query_selector(".description")
             if bio_el:
                 data["bio"] = (await bio_el.inner_text()).strip()
 
             # Companies
-            company_links = await self.page.query_selector_all('a[href*="/organization/"]')
+            company_links = await self.query_selector_all('a[href*="/organization/"]')
             companies_seen = set()
             for link in company_links[:20]:
                 try:
@@ -362,11 +299,11 @@ class CrunchbaseClient:
         if not await self.goto(url):
             return []
 
-        await asyncio.sleep(3)
+        await self.wait(3)
 
         results = []
         try:
-            items = await self.page.query_selector_all('a[href*="/organization/"]')
+            items = await self.query_selector_all('a[href*="/organization/"]')
             seen = set()
 
             for item in items[:limit * 2]:
@@ -407,11 +344,11 @@ class CrunchbaseClient:
         if not await self.goto(url):
             return []
 
-        await asyncio.sleep(3)
+        await self.wait(3)
 
         results = []
         try:
-            items = await self.page.query_selector_all('a[href*="/person/"]')
+            items = await self.query_selector_all('a[href*="/person/"]')
             seen = set()
 
             for item in items[:limit * 2]:
@@ -452,11 +389,11 @@ class CrunchbaseClient:
         if not await self.goto(url):
             return []
 
-        await asyncio.sleep(3)
+        await self.wait(3)
 
         rounds = []
         try:
-            rows = await self.page.query_selector_all('grid-row, [class*="funding-round"]')
+            rows = await self.query_selector_all('grid-row, [class*="funding-round"]')
 
             for row in rows[:20]:
                 try:

@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from ..browser import BrowserClient
+from ..browser.lib.browser_client import BrowserClient
 
 
 class CollectiveClient:
