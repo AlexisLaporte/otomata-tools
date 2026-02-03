@@ -47,7 +47,7 @@ python -m pipx ensurepath
 
 ```bash
 # For 321founded team
-pipx install git+https://github.com/321founded/otomata-tools.git
+pipx install git+https://github.com/321founded/memento.git
 
 # From source repo
 pipx install git+https://github.com/AlexisLaporte/otomata-tools.git
