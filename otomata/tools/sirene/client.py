@@ -109,7 +109,7 @@ class SireneClient:
         return self._token
 
     def _build_query(self, params: Dict[str, Any]) -> str:
-        """Build Sirene search query string."""
+        """Build Sirene search query string for SIREN endpoint."""
         conditions = []
 
         if params.get("active_only", True):
@@ -147,32 +147,121 @@ class SireneClient:
 
         return " AND ".join(conditions)
 
-    def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_siret_query(self, params: Dict[str, Any]) -> str:
+        """Build Sirene search query string for SIRET endpoint."""
+        conditions = []
+
+        if params.get("active_only", True):
+            conditions.append("etatAdministratifEtablissement:A")
+
+        if params.get("headquarters_only", False):
+            conditions.append("etablissementSiege:true")
+
+        naf_codes = params.get("naf_codes", [])
+        if naf_codes:
+            naf_q = []
+            for code in naf_codes:
+                if len(code) == 2 and code.isdigit():
+                    naf_q.append(f"activitePrincipaleEtablissement:{code}.*")
+                else:
+                    naf_q.append(f"activitePrincipaleEtablissement:{code}")
+            conditions.append(f"({' OR '.join(naf_q)})")
+
+        emp_ranges = params.get("employee_ranges")
+        if emp_ranges:
+            emp_q = " OR ".join([f"trancheEffectifsEtablissement:{r}" for r in emp_ranges])
+            conditions.append(f"({emp_q})")
+
+        legal_cats = params.get("legal_categories", [])
+        if legal_cats:
+            cat_q = " OR ".join([f"uniteLegale.categorieJuridiqueUniteLegale:{c}" for c in legal_cats])
+            conditions.append(f"({cat_q})")
+
+        postal_code = params.get("postal_code")
+        if postal_code:
+            conditions.append(f"codePostalEtablissement:{postal_code}")
+
+        city = params.get("city")
+        if city:
+            conditions.append(f"libelleCommuneEtablissement:{city.upper()}")
+
+        name = params.get("name")
+        if name:
+            conditions.append(f"uniteLegale.denominationUniteLegale:*{name}*")
+
+        date_min = params.get("created_after")
+        date_max = params.get("created_before")
+        if date_min or date_max:
+            if date_min and date_max:
+                conditions.append(f"dateCreationEtablissement:[{date_min} TO {date_max}]")
+            elif date_min:
+                conditions.append(f"dateCreationEtablissement:[{date_min} TO *]")
+            elif date_max:
+                conditions.append(f"dateCreationEtablissement:[* TO {date_max}]")
+
+        return " AND ".join(conditions)
+
+    def search(
+        self,
+        naf: List[str] = None,
+        employees: List[str] = None,
+        legal_categories: List[str] = None,
+        exclude_legal: List[str] = None,
+        date_min: str = None,
+        date_max: str = None,
+        name: str = None,
+        active_only: bool = True,
+        limit: int = 20,
+        offset: int = 0,
+        params: Dict[str, Any] = None,  # Legacy: accept dict directly
+    ) -> Dict[str, Any]:
         """
-        Search companies.
+        Search companies (unités légales).
 
         Args:
-            params: Search parameters
-                - naf_codes: list of NAF codes (e.g. ['62.01Z', '62'])
-                - employee_ranges: list of range codes (e.g. ['11', '12'])
-                - legal_categories: list of legal category codes
-                - created_after: YYYY-MM-DD
-                - created_before: YYYY-MM-DD
-                - active_only: bool (default True)
-                - limit: max results (default 20)
-                - offset: pagination offset
+            naf: List of NAF codes (e.g. ['62.01Z', '62'])
+            employees: List of employee range codes (e.g. ['11', '12'])
+            legal_categories: List of legal category codes
+            exclude_legal: List of legal category codes to exclude
+            date_min: Created after (YYYY-MM-DD)
+            date_max: Created before (YYYY-MM-DD)
+            name: Company name filter
+            active_only: Only active companies (default True)
+            limit: Max results (default 20)
+            offset: Pagination offset
+            params: Legacy dict-based parameters (deprecated)
 
         Returns:
             API response with unitesLegales array
         """
+        # Support legacy dict-based call
+        if params is not None:
+            naf = params.get("naf_codes") or params.get("naf", naf)
+            employees = params.get("employee_ranges") or params.get("employees", employees)
+            legal_categories = params.get("legal_categories", legal_categories)
+            date_min = params.get("created_after") or params.get("date_min", date_min)
+            date_max = params.get("created_before") or params.get("date_max", date_max)
+            active_only = params.get("active_only", active_only)
+            limit = params.get("limit", limit)
+            offset = params.get("offset", offset)
+
+        search_params = {
+            "naf_codes": naf or [],
+            "employee_ranges": employees,
+            "legal_categories": legal_categories or [],
+            "created_after": date_min,
+            "created_before": date_max,
+            "active_only": active_only,
+        }
+
         query_params = {}
-        query = self._build_query(params)
+        query = self._build_query(search_params)
         if query:
             query_params["q"] = query
 
-        query_params["nombre"] = params.get("limit", 20)
-        if params.get("offset"):
-            query_params["debut"] = params["offset"]
+        query_params["nombre"] = limit
+        if offset:
+            query_params["debut"] = offset
 
         query_params["champs"] = ",".join([
             "siren", "denominationUniteLegale", "sigleUniteLegale",
@@ -213,19 +302,26 @@ class SireneClient:
 
         return resp.json().get("uniteLegale", {})
 
-    def get_establishments(self, siren: str) -> List[Dict[str, Any]]:
+    def get_establishments(
+        self, siren: str, active_only: bool = True
+    ) -> List[Dict[str, Any]]:
         """
         Get all establishments (SIRET) for a company.
 
         Args:
             siren: Company SIREN number
+            active_only: Only return active establishments
 
         Returns:
             List of establishments
         """
+        query = f"siren:{siren}"
+        if active_only:
+            query += " AND etatAdministratifEtablissement:A"
+
         resp = requests.get(
             f"{self.BASE_URL}/siret",
-            params={"q": f"siren:{siren}", "nombre": 1000},
+            params={"q": query, "nombre": 1000},
             headers=self._get_headers()
         )
 
@@ -233,3 +329,142 @@ class SireneClient:
             raise Exception(f"API error: {resp.status_code} {resp.text}")
 
         return resp.json().get("etablissements", [])
+
+    def search_siret(
+        self,
+        naf: List[str] = None,
+        employees: List[str] = None,
+        legal_categories: List[str] = None,
+        postal_code: str = None,
+        city: str = None,
+        name: str = None,
+        date_min: str = None,
+        date_max: str = None,
+        active_only: bool = True,
+        headquarters_only: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Search establishments (SIRET) with location filters.
+
+        Args:
+            naf: List of NAF codes
+            employees: List of employee range codes
+            legal_categories: List of legal category codes
+            postal_code: Postal code filter
+            city: City name filter
+            name: Company name filter
+            date_min: Created after (YYYY-MM-DD)
+            date_max: Created before (YYYY-MM-DD)
+            active_only: Only active establishments
+            headquarters_only: Only headquarters (siège)
+            limit: Max results
+            offset: Pagination offset
+
+        Returns:
+            API response with etablissements array
+        """
+        search_params = {
+            "naf_codes": naf or [],
+            "employee_ranges": employees,
+            "legal_categories": legal_categories or [],
+            "postal_code": postal_code,
+            "city": city,
+            "name": name,
+            "created_after": date_min,
+            "created_before": date_max,
+            "active_only": active_only,
+            "headquarters_only": headquarters_only,
+        }
+
+        query_params = {}
+        query = self._build_siret_query(search_params)
+        if query:
+            query_params["q"] = query
+
+        query_params["nombre"] = limit
+        if offset:
+            query_params["debut"] = offset
+
+        resp = requests.get(
+            f"{self.BASE_URL}/siret",
+            params=query_params,
+            headers=self._get_headers()
+        )
+
+        if not resp.ok:
+            raise Exception(f"API error: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
+    def get_siret(self, siret: str) -> Dict[str, Any]:
+        """
+        Get establishment details by SIRET number.
+
+        Args:
+            siret: 14-digit SIRET number
+
+        Returns:
+            Establishment data
+        """
+        resp = requests.get(
+            f"{self.BASE_URL}/siret/{siret}",
+            headers=self._get_headers()
+        )
+
+        if not resp.ok:
+            raise Exception(f"API error: {resp.status_code} {resp.text}")
+
+        return resp.json().get("etablissement", {})
+
+    def get_headquarters(self, siren: str) -> Optional[Dict[str, Any]]:
+        """
+        Get company headquarters with full address.
+
+        Args:
+            siren: 9-digit SIREN number
+
+        Returns:
+            Headquarters establishment with address, or None if not found
+        """
+        resp = requests.get(
+            f"{self.BASE_URL}/siret",
+            params={
+                "q": f"siren:{siren} AND etablissementSiege:true",
+                "nombre": 1,
+            },
+            headers=self._get_headers()
+        )
+
+        if not resp.ok:
+            raise Exception(f"API error: {resp.status_code} {resp.text}")
+
+        establishments = resp.json().get("etablissements", [])
+        if not establishments:
+            return None
+
+        etab = establishments[0]
+        addr = etab.get("adresseEtablissement", {})
+
+        return {
+            "siret": etab.get("siret"),
+            "siren": siren,
+            "nic": etab.get("nic"),
+            "is_headquarters": True,
+            "is_active": etab.get("etatAdministratifEtablissement") == "A",
+            "address": {
+                "street": " ".join(filter(None, [
+                    addr.get("numeroVoieEtablissement"),
+                    addr.get("typeVoieEtablissement"),
+                    addr.get("libelleVoieEtablissement"),
+                ])),
+                "postal_code": addr.get("codePostalEtablissement"),
+                "city": addr.get("libelleCommuneEtablissement"),
+                "cedex": addr.get("libelleCedexEtablissement"),
+                "country": addr.get("libellePaysEtrangerEtablissement") or "FRANCE",
+            },
+            "naf_code": etab.get("activitePrincipaleEtablissement"),
+            "employees": etab.get("trancheEffectifsEtablissement"),
+            "created_at": etab.get("dateCreationEtablissement"),
+        }

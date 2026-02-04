@@ -276,19 +276,231 @@ def g2_reviews(
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+# Sirene subcommands (French company data)
+sirene_app = typer.Typer(help="French company data (INSEE SIRENE, API Entreprises)")
+app.add_typer(sirene_app, name="sirene")
+
+
+@sirene_app.command("search")
+def sirene_search(
+    naf: Optional[str] = typer.Option(None, "--naf", help="NAF codes (comma-separated, e.g. 62.01Z,62.02A)"),
+    employees: Optional[str] = typer.Option(None, "--employees", help="Employee ranges (e.g. 11,12)"),
+    dept: Optional[str] = typer.Option(None, "--dept", help="Department code for SIRET search"),
+    postal: Optional[str] = typer.Option(None, "--postal", help="Postal code for SIRET search"),
+    city: Optional[str] = typer.Option(None, "--city", help="City name for SIRET search"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+):
+    """Search French companies in INSEE SIRENE database."""
+    import json
+    from otomata.tools.sirene import SireneClient
+
+    client = SireneClient()
+    naf_list = naf.split(",") if naf else None
+    emp_list = employees.split(",") if employees else None
+
+    # Use SIRET search when location filters are specified
+    if dept or postal or city:
+        results = client.search_siret(
+            naf=naf_list,
+            employees=emp_list,
+            postal_code=postal,
+            city=city,
+            headquarters_only=True,
+            limit=limit,
+        )
+        companies = results.get("etablissements", [])
+        print(json.dumps({
+            "total": results.get("header", {}).get("total", len(companies)),
+            "count": len(companies),
+            "etablissements": companies,
+        }, indent=2, ensure_ascii=False))
+    else:
+        results = client.search(
+            naf=naf_list,
+            employees=emp_list,
+            limit=limit,
+        )
+        companies = results.get("unitesLegales", [])
+        print(json.dumps({
+            "total": results.get("header", {}).get("total", len(companies)),
+            "count": len(companies),
+            "unitesLegales": companies,
+        }, indent=2, ensure_ascii=False))
+
+
+@sirene_app.command("get")
+def sirene_get(
+    siren: str = typer.Argument(..., help="SIREN number (9 digits)"),
+):
+    """Get company details by SIREN."""
+    import json
+    from otomata.tools.sirene import SireneClient
+
+    client = SireneClient()
+    company = client.get_by_siren(siren)
+    print(json.dumps(company, indent=2, ensure_ascii=False))
+
+
+@sirene_app.command("siret")
+def sirene_siret(
+    siret: str = typer.Argument(..., help="SIRET number (14 digits)"),
+):
+    """Get establishment details by SIRET."""
+    import json
+    from otomata.tools.sirene import SireneClient
+
+    client = SireneClient()
+    establishment = client.get_siret(siret)
+    print(json.dumps(establishment, indent=2, ensure_ascii=False))
+
+
+@sirene_app.command("headquarters")
+def sirene_headquarters(
+    siren: str = typer.Argument(..., help="SIREN number (9 digits)"),
+):
+    """Get company headquarters with address."""
+    import json
+    from otomata.tools.sirene import SireneClient
+
+    client = SireneClient()
+    hq = client.get_headquarters(siren)
+    if hq:
+        print(json.dumps(hq, indent=2, ensure_ascii=False))
+    else:
+        print("Headquarters not found")
+        raise typer.Exit(1)
+
+
+@sirene_app.command("suggest-naf")
+def sirene_suggest_naf(
+    description: str = typer.Argument(..., help="Activity description in French"),
+    limit: int = typer.Option(3, "--limit", "-n", help="Max suggestions"),
+):
+    """Suggest NAF codes from activity description using AI."""
+    import json
+    from otomata.tools.naf import NAFSuggester
+
+    suggester = NAFSuggester()
+    suggestions = suggester.suggest(description, limit=limit)
+
+    result = [{
+        "code": s.code,
+        "label": s.label,
+        "confidence": s.confidence,
+        "reason": s.reason,
+    } for s in suggestions]
+
+    print(json.dumps({"suggestions": result}, indent=2, ensure_ascii=False))
+
+
+@sirene_app.command("entreprises")
+def sirene_entreprises(
+    query: Optional[str] = typer.Argument(None, help="Search query"),
+    naf: Optional[str] = typer.Option(None, "--naf", help="NAF codes (comma-separated)"),
+    dept: Optional[str] = typer.Option(None, "--dept", help="Department code"),
+    ca_min: Optional[int] = typer.Option(None, "--ca-min", help="Min turnover (€)"),
+    ca_max: Optional[int] = typer.Option(None, "--ca-max", help="Max turnover (€)"),
+    limit: int = typer.Option(25, "--limit", "-n", help="Max results"),
+):
+    """Search companies with enriched data (directors, finances) via API Entreprises."""
+    import json
+    from otomata.tools.sirene import EntreprisesClient
+
+    client = EntreprisesClient()
+    naf_list = naf.split(",") if naf else None
+
+    results = client.search(
+        query=query,
+        naf=naf_list,
+        departement=dept,
+        ca_min=ca_min,
+        ca_max=ca_max,
+        per_page=limit,
+    )
+    print(json.dumps(results, indent=2, ensure_ascii=False))
+
+
+# Stock subcommands
+stock_app = typer.Typer(help="SIRENE stock file for batch operations (~2GB local file)")
+sirene_app.add_typer(stock_app, name="stock")
+
+
+@stock_app.command("status")
+def stock_status():
+    """Show stock file status."""
+    from otomata.tools.sirene import SireneStock
+
+    stock = SireneStock()
+    print(f"Path: {stock.stock_file}")
+    print(f"Available: {'Yes' if stock.is_available else 'No'}")
+
+    if stock.is_available:
+        print(f"Size: {stock.file_size_gb:.2f} GB")
+        age = stock.file_age_days
+        if age:
+            print(f"Age: {age:.0f} days")
+
+    if stock.is_downloading:
+        print("Status: Downloading...")
+
+
+@stock_app.command("download")
+def stock_download(
+    force: bool = typer.Option(False, "--force", "-f", help="Re-download even if exists"),
+):
+    """Download SIRENE stock file (~2GB from data.gouv.fr)."""
+    from otomata.tools.sirene import SireneStock
+
+    stock = SireneStock()
+
+    if stock.is_available and not force:
+        print(f"Stock file already exists: {stock.stock_file}")
+        print(f"Size: {stock.file_size_gb:.2f} GB, Age: {stock.file_age_days:.0f} days")
+        print("Use --force to re-download")
+        return
+
+    stock.download(force=force)
+
+
+@stock_app.command("addresses")
+def stock_addresses(
+    sirens: str = typer.Argument(..., help="SIREN numbers (comma-separated)"),
+):
+    """Get headquarters addresses from stock file (batch mode)."""
+    import json
+    from otomata.tools.sirene import SireneStock
+
+    stock = SireneStock()
+    siren_list = [s.strip() for s in sirens.split(",")]
+    addresses = stock.get_headquarters_addresses(siren_list)
+    print(json.dumps(addresses, indent=2, ensure_ascii=False))
+
+
 # Config commands
 @app.command("config")
 def show_config():
     """Show current configuration and detected secrets."""
-    from otomata.config import find_env_file, get_secret
+    from pathlib import Path
+    from otomata.config import _find_project_secrets, _get_user_secrets, get_secret
 
-    env_file = find_env_file()
-    print(f"Env file: {env_file or 'Not found'}")
+    project_secrets = _find_project_secrets()
+    user_secrets = _get_user_secrets()
+
+    print("Secrets files:")
+    print(f"  Project: {project_secrets or '.otomata/secrets.env (not found)'}")
+    print(f"  User:    {user_secrets}{' (exists)' if user_secrets.exists() else ' (not found)'}")
     print()
     print("Secrets status:")
-    print(f"  GOOGLE_SERVICE_ACCOUNT: {'✓ Found' if get_secret('GOOGLE_SERVICE_ACCOUNT') else '✗ Not found'}")
-    print(f"  NOTION_API_KEY: {'✓ Found' if get_secret('NOTION_API_KEY') else '✗ Not found'}")
-    print(f"  LINKEDIN_COOKIE: {'✓ Found' if get_secret('LINKEDIN_COOKIE') else '✗ Not found'}")
+    secrets = [
+        "GOOGLE_SERVICE_ACCOUNT",
+        "NOTION_API_KEY",
+        "LINKEDIN_COOKIE",
+        "SIRENE_API_KEY",
+        "GROQ_API_KEY",
+    ]
+    for name in secrets:
+        status = "✓" if get_secret(name) else "✗"
+        print(f"  {status} {name}")
 
 
 if __name__ == "__main__":
