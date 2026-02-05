@@ -50,8 +50,11 @@ media = [
 ai = [
     "anthropic>=0.40.0",
 ]
+pennylane = [
+    "requests>=2.28.0",
+]
 all = [
-    "otomata[browser,marketing,crm,communication,company-fr,search,media,ai]",
+    "otomata[browser,marketing,crm,communication,company-fr,search,media,ai,pennylane]",
 ]
 dev = [
     "pytest>=7.0.0",
