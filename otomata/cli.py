@@ -143,6 +143,9 @@ def linkedin_company(
     url: str = typer.Argument(..., help="LinkedIn company URL"),
     cookie: Optional[str] = typer.Option(None, envvar="LINKEDIN_COOKIE", help="li_at cookie"),
     identity: str = typer.Option("default", help="Identity for rate limiting"),
+    profile: Optional[str] = typer.Option(None, help="Chrome profile directory path"),
+    channel: Optional[str] = typer.Option(None, envvar="BROWSER_CHANNEL", help="Chrome channel (chrome, chrome-beta, chromium)"),
+    no_rate_limit: bool = typer.Option(False, "--no-rate-limit", help="Disable rate limiting"),
     headless: bool = typer.Option(True, help="Run headless"),
 ):
     """Scrape LinkedIn company page."""
@@ -151,7 +154,7 @@ def linkedin_company(
     from otomata.tools.browser import LinkedInClient
 
     async def run():
-        async with LinkedInClient(cookie=cookie, identity=identity, headless=headless) as client:
+        async with LinkedInClient(cookie=cookie, identity=identity, profile=profile, channel=channel, headless=headless, rate_limit=not no_rate_limit) as client:
             return await client.scrape_company(url)
 
     result = asyncio.run(run())
@@ -163,6 +166,9 @@ def linkedin_profile(
     url: str = typer.Argument(..., help="LinkedIn profile URL"),
     cookie: Optional[str] = typer.Option(None, envvar="LINKEDIN_COOKIE", help="li_at cookie"),
     identity: str = typer.Option("default", help="Identity for rate limiting"),
+    profile: Optional[str] = typer.Option(None, help="Chrome profile directory path"),
+    channel: Optional[str] = typer.Option(None, envvar="BROWSER_CHANNEL", help="Chrome channel (chrome, chrome-beta, chromium)"),
+    no_rate_limit: bool = typer.Option(False, "--no-rate-limit", help="Disable rate limiting"),
     headless: bool = typer.Option(True, help="Run headless"),
 ):
     """Scrape LinkedIn profile page."""
@@ -171,7 +177,7 @@ def linkedin_profile(
     from otomata.tools.browser import LinkedInClient
 
     async def run():
-        async with LinkedInClient(cookie=cookie, identity=identity, headless=headless) as client:
+        async with LinkedInClient(cookie=cookie, identity=identity, profile=profile, channel=channel, headless=headless, rate_limit=not no_rate_limit) as client:
             return await client.scrape_profile(url)
 
     result = asyncio.run(run())
@@ -183,6 +189,9 @@ def linkedin_search(
     query: str = typer.Argument(..., help="Search query"),
     limit: int = typer.Option(5, help="Max results"),
     cookie: Optional[str] = typer.Option(None, envvar="LINKEDIN_COOKIE", help="li_at cookie"),
+    profile: Optional[str] = typer.Option(None, help="Chrome profile directory path"),
+    channel: Optional[str] = typer.Option(None, envvar="BROWSER_CHANNEL", help="Chrome channel (chrome, chrome-beta, chromium)"),
+    no_rate_limit: bool = typer.Option(False, "--no-rate-limit", help="Disable rate limiting"),
     headless: bool = typer.Option(True, help="Run headless"),
 ):
     """Search LinkedIn companies."""
@@ -191,7 +200,7 @@ def linkedin_search(
     from otomata.tools.browser import LinkedInClient
 
     async def run():
-        async with LinkedInClient(cookie=cookie, headless=headless) as client:
+        async with LinkedInClient(cookie=cookie, profile=profile, channel=channel, headless=headless, rate_limit=not no_rate_limit) as client:
             return await client.search_companies(query, limit=limit)
 
     result = asyncio.run(run())
@@ -203,6 +212,9 @@ def linkedin_people(
     slug: str = typer.Argument(..., help="LinkedIn company slug"),
     limit: int = typer.Option(20, help="Max results"),
     cookie: Optional[str] = typer.Option(None, envvar="LINKEDIN_COOKIE", help="li_at cookie"),
+    profile: Optional[str] = typer.Option(None, help="Chrome profile directory path"),
+    channel: Optional[str] = typer.Option(None, envvar="BROWSER_CHANNEL", help="Chrome channel (chrome, chrome-beta, chromium)"),
+    no_rate_limit: bool = typer.Option(False, "--no-rate-limit", help="Disable rate limiting"),
     headless: bool = typer.Option(True, help="Run headless"),
 ):
     """List people from a LinkedIn company page."""
@@ -211,7 +223,7 @@ def linkedin_people(
     from otomata.tools.browser import LinkedInClient
 
     async def run():
-        async with LinkedInClient(cookie=cookie, headless=headless) as client:
+        async with LinkedInClient(cookie=cookie, profile=profile, channel=channel, headless=headless, rate_limit=not no_rate_limit) as client:
             return await client.get_company_people(slug, limit=limit)
 
     result = asyncio.run(run())
@@ -224,6 +236,9 @@ def linkedin_employees(
     keywords: Optional[str] = typer.Option(None, help="Title keywords (comma-separated)"),
     limit: int = typer.Option(10, help="Max results"),
     cookie: Optional[str] = typer.Option(None, envvar="LINKEDIN_COOKIE", help="li_at cookie"),
+    profile: Optional[str] = typer.Option(None, help="Chrome profile directory path"),
+    channel: Optional[str] = typer.Option(None, envvar="BROWSER_CHANNEL", help="Chrome channel (chrome, chrome-beta, chromium)"),
+    no_rate_limit: bool = typer.Option(False, "--no-rate-limit", help="Disable rate limiting"),
     headless: bool = typer.Option(True, help="Run headless"),
 ):
     """Search company employees on LinkedIn."""
@@ -233,7 +248,7 @@ def linkedin_employees(
 
     async def run():
         kw_list = keywords.split(",") if keywords else None
-        async with LinkedInClient(cookie=cookie, headless=headless) as client:
+        async with LinkedInClient(cookie=cookie, profile=profile, channel=channel, headless=headless, rate_limit=not no_rate_limit) as client:
             return await client.search_employees(company, keywords=kw_list, limit=limit)
 
     result = asyncio.run(run())
@@ -323,6 +338,7 @@ app.add_typer(sirene_app, name="sirene")
 
 @sirene_app.command("search")
 def sirene_search(
+    query: Optional[str] = typer.Argument(None, help="Company name to search"),
     naf: Optional[str] = typer.Option(None, "--naf", help="NAF codes (comma-separated, e.g. 62.01Z,62.02A)"),
     employees: Optional[str] = typer.Option(None, "--employees", help="Employee ranges (e.g. 11,12)"),
     dept: Optional[str] = typer.Option(None, "--dept", help="Department code for SIRET search"),
@@ -338,9 +354,10 @@ def sirene_search(
     naf_list = naf.split(",") if naf else None
     emp_list = employees.split(",") if employees else None
 
-    # Use SIRET search when location filters are specified
-    if dept or postal or city:
+    # Use SIRET search when name or location filters are specified
+    if query or dept or postal or city:
         results = client.search_siret(
+            name=query,
             naf=naf_list,
             employees=emp_list,
             postal_code=postal,
@@ -650,6 +667,7 @@ BROWSER AUTOMATION
   otomata browser linkedin-search <QUERY>           Search LinkedIn companies
   otomata browser linkedin-people <SLUG>            List people from LinkedIn company
   otomata browser linkedin-employees <SLUG>         Search employees by keywords
+    LinkedIn options: --cookie, --profile <dir>, --channel (chrome|chrome-beta|chromium)
   otomata browser pappers-siren <SIREN>             Scrape Pappers company page
   otomata browser crunchbase-company <SLUG>         Scrape Crunchbase company
   otomata browser indeed-search <QUERY>             Search jobs on Indeed
@@ -666,7 +684,7 @@ CONTACT ENRICHMENT
   otomata hunter verify <EMAIL>                     Verify an email
 
 FRENCH COMPANY DATA (SIRENE)
-  otomata sirene search [--naf ...] [--dept ...]     Search INSEE SIRENE
+  otomata sirene search [QUERY] [--naf ...] [--dept ...]  Search INSEE SIRENE
   otomata sirene get <SIREN>                        Get by SIREN (needs API key)
   otomata sirene entreprises [QUERY]                Search API Entreprises
   otomata sirene headquarters <SIREN>               Get HQ address
