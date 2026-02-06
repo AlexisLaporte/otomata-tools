@@ -633,6 +633,90 @@ def hunter_verify(
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+# Lemlist subcommands
+lemlist_app = typer.Typer(help="Lemlist campaign & lead management")
+app.add_typer(lemlist_app, name="lemlist")
+
+
+@lemlist_app.command("campaigns")
+def lemlist_campaigns():
+    """List all Lemlist campaigns."""
+    import json
+    from otomata.tools.lemlist import LemlistClient
+
+    client = LemlistClient()
+    campaigns = client.list_campaigns()
+    result = [{"id": c.id, "name": c.name, "status": c.status, "senders": c.senders} for c in campaigns]
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@lemlist_app.command("leads")
+def lemlist_leads(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+):
+    """List leads in a campaign."""
+    import json
+    from otomata.tools.lemlist import LemlistClient
+
+    client = LemlistClient()
+    leads = client.get_all_leads(campaign_id)
+    print(json.dumps(leads, indent=2, ensure_ascii=False))
+
+
+@lemlist_app.command("add-lead")
+def lemlist_add_lead(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+    email: str = typer.Option(..., "--email", "-e", help="Lead email"),
+    first_name: str = typer.Option(None, "--first-name", help="First name"),
+    last_name: str = typer.Option(None, "--last-name", help="Last name"),
+    company: str = typer.Option(None, "--company", help="Company name"),
+    phone: str = typer.Option(None, "--phone", help="Phone number"),
+    linkedin: str = typer.Option(None, "--linkedin", help="LinkedIn URL"),
+):
+    """Add a lead to a Lemlist campaign."""
+    import json
+    from otomata.tools.lemlist import LemlistClient
+    from otomata.tools.lemlist.client import Lead
+
+    client = LemlistClient()
+    lead = Lead(
+        email=email,
+        firstName=first_name,
+        lastName=last_name,
+        companyName=company,
+        phone=phone,
+        linkedinUrl=linkedin,
+    )
+    result = client.add_lead(campaign_id, lead)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@lemlist_app.command("delete-lead")
+def lemlist_delete_lead(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+    email: str = typer.Argument(..., help="Lead email to remove"),
+):
+    """Remove a lead from a Lemlist campaign."""
+    import json
+    from otomata.tools.lemlist import LemlistClient
+
+    client = LemlistClient()
+    result = client.delete_lead(campaign_id, email)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@lemlist_app.command("export")
+def lemlist_export(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+):
+    """Export leads from a campaign as CSV."""
+    from otomata.tools.lemlist import LemlistClient
+
+    client = LemlistClient()
+    csv_data = client.export_leads(campaign_id)
+    print(csv_data)
+
+
 # Top-level company command
 @app.command("company")
 def company_info(
@@ -819,6 +903,69 @@ def pennylane_complete(
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+# Anthropic Admin API subcommands
+anthropic_app = typer.Typer(help="Anthropic Admin API (usage & cost tracking)")
+app.add_typer(anthropic_app, name="anthropic")
+
+
+@anthropic_app.command("usage")
+def anthropic_usage(
+    days: int = typer.Option(7, "--days", "-d", help="Number of days to look back"),
+    bucket: str = typer.Option("1d", "--bucket", "-b", help="Bucket width: 1m, 1h, 1d"),
+    group_by: Optional[str] = typer.Option("model", "--group-by", "-g", help="Group by: model, api_key_id, workspace_id, service_tier"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Filter to specific model"),
+):
+    """Get token usage report."""
+    import json
+    from otomata.tools.anthropic import AnthropicAdminClient
+
+    client = AnthropicAdminClient()
+    groups = [g.strip() for g in group_by.split(",")] if group_by else None
+    models = [model] if model else None
+    data = client.get_usage(bucket_width=bucket, group_by=groups, models=models,
+                            limit=days if bucket == "1d" else None)
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@anthropic_app.command("cost")
+def anthropic_cost(
+    days: int = typer.Option(30, "--days", "-d", help="Number of days to look back"),
+    group_by: Optional[str] = typer.Option(None, "--group-by", "-g", help="Group by: workspace_id, description"),
+):
+    """Get cost report (daily, USD)."""
+    import json
+    from otomata.tools.anthropic import AnthropicAdminClient
+
+    client = AnthropicAdminClient()
+    groups = [g.strip() for g in group_by.split(",")] if group_by else None
+    data = client.get_costs(group_by=groups)
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@anthropic_app.command("summary")
+def anthropic_summary(
+    days: int = typer.Option(7, "--days", "-d", help="Number of days to look back"),
+):
+    """Daily usage summary with estimated costs by model."""
+    import json
+    from otomata.tools.anthropic import AnthropicAdminClient
+
+    client = AnthropicAdminClient()
+    result = client.get_daily_summary(days=days)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@anthropic_app.command("today")
+def anthropic_today():
+    """Today's usage and estimated cost."""
+    import json
+    from otomata.tools.anthropic import AnthropicAdminClient
+
+    client = AnthropicAdminClient()
+    result = client.get_today_cost()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
 # Config commands
 @app.command("config")
 def show_config():
@@ -840,6 +987,7 @@ def show_config():
         "LINKEDIN_COOKIE",
         "SIRENE_API_KEY",
         "GROQ_API_KEY",
+        "ANTHROPIC_ADMIN_API_KEY",
     ]
     for name in secrets:
         status = "✓" if get_secret(name) else "✗"
