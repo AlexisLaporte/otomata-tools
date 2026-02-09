@@ -8,8 +8,11 @@ CLI et librairie Python pour l'automatisation : Google Workspace, Notion, Sirene
 # CLI uniquement
 pipx install git+https://github.com/AlexisLaporte/otomata-tools.git
 
-# Dans un projet Python
+# Dans un projet Python (dernière version)
 pip install git+https://github.com/AlexisLaporte/otomata-tools.git
+
+# Pinner une version
+pip install git+https://github.com/AlexisLaporte/otomata-tools.git@v0.2.0
 
 # Avec extras
 pip install "otomata[stock] @ git+https://github.com/AlexisLaporte/otomata-tools.git"
@@ -156,6 +159,29 @@ from otomata.tools.browser import BrowserClient
 async with BrowserClient(profile_path="~/.otomata/sessions/linkedin") as browser:
     await browser.goto("https://linkedin.com")
     # Session cookies persistés dans profile_path
+```
+
+## Versioning
+
+La version est définie dans `otomata/__init__.py` (`__version__`). `pyproject.toml` la lit dynamiquement via hatchling.
+
+Au premier import, otomata vérifie en arrière-plan si une nouvelle version existe sur GitHub (API releases, timeout 3s, non-bloquant). Si oui, un `warnings.warn` s'affiche avec la commande d'upgrade.
+
+Désactiver le check :
+
+```bash
+OTOMATA_NO_UPDATE_CHECK=1 python mon_script.py
+```
+
+### Publier une nouvelle version
+
+```bash
+# 1. Bumper __version__ dans otomata/__init__.py
+# 2. Commit + push
+# 3. Tag + release
+git tag v0.X.0
+git push origin v0.X.0
+gh release create v0.X.0 --title "v0.X.0" --notes "..."
 ```
 
 ## Développement
