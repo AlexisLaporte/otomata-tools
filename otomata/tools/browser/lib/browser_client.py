@@ -9,8 +9,21 @@ Supports:
 """
 
 import asyncio
+import os
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Callable, Any
+
+
+def _detect_channel() -> str:
+    """Detect best available Chrome channel."""
+    for channel, binary in [
+        ("chrome-beta", "google-chrome-beta"),
+        ("chrome", "google-chrome"),
+    ]:
+        if shutil.which(binary):
+            return channel
+    return "chromium"  # patchright bundled fallback
 
 
 class BrowserClient:
@@ -24,6 +37,7 @@ class BrowserClient:
         self,
         profile_path: Optional[str] = None,
         headless: bool = True,
+        channel: Optional[str] = None,
         viewport: tuple[int, int] = (1920, 1080),
         user_agent: str = None,
         cookies: List[Dict] = None,
@@ -38,6 +52,8 @@ class BrowserClient:
             profile_path: Path to browser profile directory for persistent sessions.
                           If None, uses ephemeral session (can still inject cookies).
             headless: Run browser in headless mode.
+            channel: Chrome channel ("chrome", "chrome-beta", "chromium").
+                     Default: BROWSER_CHANNEL env var, or auto-detect.
             viewport: Browser viewport size (width, height).
             user_agent: Custom user agent string.
             cookies: List of cookies to inject after browser starts.
@@ -47,6 +63,7 @@ class BrowserClient:
         """
         self.profile_path = Path(profile_path).expanduser() if profile_path else None
         self.headless = headless
+        self.channel = channel or os.environ.get("BROWSER_CHANNEL") or _detect_channel()
         self.viewport = {"width": viewport[0], "height": viewport[1]}
         self.user_agent = user_agent
         self.cookies = cookies or []
@@ -97,7 +114,7 @@ class BrowserClient:
             context_options = {
                 "user_data_dir": str(self.profile_path),
                 "headless": self.headless,
-                "channel": "chrome",
+                "channel": self.channel,
                 "viewport": self.viewport,
                 "args": launch_args,
             }
@@ -116,7 +133,7 @@ class BrowserClient:
             # Ephemeral context
             self._browser = await self._playwright.chromium.launch(
                 headless=self.headless,
-                channel="chrome",
+                channel=self.channel,
                 args=launch_args,
             )
 
@@ -323,3 +340,89 @@ class BrowserClient:
     async def evaluate(self, expression: str) -> Any:
         """Evaluate JavaScript expression."""
         return await self.page.evaluate(expression)
+
+    # === GIF Recording ===
+
+    def _init_recording(self):
+        """Initialize recording state if needed."""
+        if not hasattr(self, '_frames'):
+            self._frames = []  # list of (path, delay_cs) — delay in centiseconds
+            self._rec_dir = None
+
+    async def capture_frame(self, duration: float = 0.5, full_page: bool = False):
+        """
+        Capture a screenshot frame for GIF recording.
+
+        Args:
+            duration: How long this frame should display in the GIF (seconds).
+            full_page: Capture full scrollable page vs viewport only.
+        """
+        self._init_recording()
+        if not self._rec_dir:
+            import tempfile
+            self._rec_dir = tempfile.mkdtemp(prefix="browser_gif_")
+
+        frame_path = os.path.join(self._rec_dir, f"frame_{len(self._frames):03d}.png")
+        await self.page.screenshot(path=frame_path, full_page=full_page)
+        self._frames.append((frame_path, int(duration * 100)))  # convert to centiseconds
+
+    async def type_animated(self, selector: str, text: str, frame_every: int = 5,
+                            frame_duration: float = 0.15, type_delay: int = 40):
+        """
+        Type text with realistic delay, capturing frames periodically for GIF.
+
+        Args:
+            selector: Input selector to type into.
+            text: Text to type.
+            frame_every: Capture a frame every N characters.
+            frame_duration: Duration of each typing frame in the GIF.
+            type_delay: Delay between keystrokes in ms.
+        """
+        await self.page.click(selector)
+        for i, char in enumerate(text):
+            await self.page.keyboard.type(char, delay=type_delay)
+            if (i + 1) % frame_every == 0 or i == len(text) - 1:
+                await self.capture_frame(duration=frame_duration)
+
+    def save_gif(self, output_path: str, resize: str = None, optimize: bool = True) -> str:
+        """
+        Assemble captured frames into an animated GIF using ImageMagick.
+
+        Args:
+            output_path: Where to save the GIF.
+            resize: Optional resize (e.g., "1280x800", "50%").
+            optimize: Apply -layers Optimize to reduce file size.
+
+        Returns:
+            Path to the saved GIF.
+        """
+        import subprocess
+        import shutil
+
+        self._init_recording()
+        if not self._frames:
+            raise RuntimeError("No frames captured. Use capture_frame() first.")
+
+        if not shutil.which("convert"):
+            raise RuntimeError("ImageMagick 'convert' not found. Install with: apt install imagemagick")
+
+        # Build convert command: -delay <cs> frame.png -delay <cs> frame.png ...
+        cmd = ["convert"]
+        for path, delay_cs in self._frames:
+            cmd.extend(["-delay", str(delay_cs), path])
+        cmd.extend(["-loop", "0"])
+        if resize:
+            cmd.extend(["-resize", resize])
+        if optimize:
+            cmd.extend(["-layers", "Optimize"])
+        cmd.append(output_path)
+
+        subprocess.run(cmd, check=True)
+
+        # Cleanup temp frames
+        if self._rec_dir:
+            shutil.rmtree(self._rec_dir, ignore_errors=True)
+        self._frames = []
+        self._rec_dir = None
+
+        return output_path

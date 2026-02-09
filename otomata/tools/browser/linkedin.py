@@ -37,7 +37,9 @@ class LinkedInClient(BrowserClient):
         self,
         cookie: str = None,
         identity: str = "default",
+        profile: str = None,
         headless: bool = True,
+        channel: str = None,
         rate_limit: bool = True,
         account_type: str = "free",
         user_agent: str = None,
@@ -46,9 +48,13 @@ class LinkedInClient(BrowserClient):
         Initialize LinkedIn client.
 
         Args:
-            cookie: li_at cookie value (or set LINKEDIN_COOKIE env var)
+            cookie: li_at cookie value (or set LINKEDIN_COOKIE env var).
+                    Not needed if using a profile that already has LinkedIn cookies.
             identity: Identity name for rate limiting separation
+            profile: Path to Chrome profile directory (persistent session).
+                     If set, cookies from the profile are used directly.
             headless: Run browser in headless mode
+            channel: Chrome channel (chrome, chrome-beta, chromium)
             rate_limit: Enforce rate limiting
             account_type: Account type for rate limits (free, premium, sales_navigator)
             user_agent: Custom user agent
@@ -56,29 +62,37 @@ class LinkedInClient(BrowserClient):
         self.identity = identity
         self.rate_limit_enabled = rate_limit
         self.account_type = account_type
+        self._use_profile = profile is not None
 
-        # Get cookie from arg or env or session file
+        # Get cookie from arg or env or session file (not needed with profile)
         self._li_at_cookie = cookie or os.environ.get("LINKEDIN_COOKIE")
-        resolved_user_agent = user_agent
+        resolved_user_agent = user_agent or os.environ.get("LINKEDIN_USER_AGENT")
 
-        if not self._li_at_cookie:
+        # Allow disabling rate limit via env var (for automated agent jobs)
+        if os.environ.get("LINKEDIN_NO_RATE_LIMIT", "").lower() in ("1", "true", "yes"):
+            self.rate_limit_enabled = False
+
+        if not self._li_at_cookie and not profile:
             session_file = get_sessions_dir() / "linkedin.json"
             if session_file.exists():
                 data = json.loads(session_file.read_text())
                 self._li_at_cookie = data.get("cookie") or data.get("li_at")
                 resolved_user_agent = resolved_user_agent or data.get("user_agent")
 
-        if not self._li_at_cookie:
+        if not self._li_at_cookie and not profile:
             raise ValueError(
                 "LinkedIn cookie required. Provide via:\n"
                 "  - cookie parameter\n"
                 "  - LINKEDIN_COOKIE env var\n"
+                "  - --profile <path> (Chrome profile with LinkedIn session)\n"
                 "  - ~/.config/otomata/sessions/linkedin.json"
             )
 
         # Initialize base BrowserClient
         super().__init__(
+            profile_path=profile,
             headless=headless,
+            channel=channel,
             viewport=(1920, 1080),
             user_agent=resolved_user_agent,
         )
@@ -141,16 +155,17 @@ class LinkedInClient(BrowserClient):
         # Start browser via parent
         await super().start()
 
-        # Inject LinkedIn cookie
-        await self.add_cookies([{
-            "name": "li_at",
-            "value": self._li_at_cookie,
-            "domain": ".linkedin.com",
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "None"
-        }])
+        # Inject LinkedIn cookie (skip when using a Chrome profile that already has cookies)
+        if not self._use_profile and self._li_at_cookie:
+            await self.add_cookies([{
+                "name": "li_at",
+                "value": self._li_at_cookie,
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None"
+            }])
 
         return self
 
@@ -492,6 +507,101 @@ class LinkedInClient(BrowserClient):
 
         return employees
 
+    async def scrape_profile_posts(self, url: str, max_posts: int = 10) -> List[dict]:
+        """
+        Scrape posts from a LinkedIn profile's activity feed.
+
+        Args:
+            url: Profile URL (e.g. https://www.linkedin.com/in/alexislaporte/)
+            max_posts: Maximum number of posts to retrieve
+
+        Returns:
+            List of {content, date, url, is_repost, engagement: {reactions, comments}}
+        """
+        await self.check_rate_limit("profile_visit")
+
+        activity_url = url.rstrip("/") + "/recent-activity/all/"
+        await self.goto(activity_url)
+        await self.wait(3)
+
+        posts = []
+        last_count = 0
+        stale_rounds = 0
+
+        # Scroll to load posts
+        for i in range(max_posts // 2 + 3):
+            await self.scroll_by(random.randint(400, 700))
+            await self.wait(random.uniform(1.5, 2.5))
+
+            items = await self.query_selector_all(".feed-shared-update-v2")
+            if len(items) >= max_posts:
+                break
+            if len(items) == last_count:
+                stale_rounds += 1
+                if stale_rounds >= 3:
+                    break
+            else:
+                stale_rounds = 0
+                last_count = len(items)
+
+        items = await self.query_selector_all(".feed-shared-update-v2")
+
+        for item in items:
+            if len(posts) >= max_posts:
+                break
+
+            # Post content
+            content_el = await item.query_selector(".break-words")
+            if not content_el:
+                content_el = await item.query_selector(".update-components-text")
+            content = (await content_el.inner_text()).strip() if content_el else ""
+
+            if not content:
+                continue
+
+            # Date
+            date = ""
+            time_el = await item.query_selector("time")
+            if time_el:
+                date = await time_el.get_attribute("datetime") or ""
+
+            # Post URL
+            post_url = ""
+            urn = await item.get_attribute("data-urn")
+            if urn:
+                activity_id = urn.split(":")[-1]
+                post_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{activity_id}/"
+
+            # Is repost
+            is_repost = False
+            header = await item.query_selector(".update-components-header__text-view")
+            if header:
+                header_text = (await header.inner_text()).lower()
+                is_repost = "repost" in header_text or "a republié" in header_text
+
+            # Engagement
+            reactions = 0
+            comments = 0
+            social_counts = await item.query_selector(".social-details-social-counts")
+            if social_counts:
+                text = (await social_counts.inner_text()).strip()
+                r_match = re.search(r"(\d[\d\s,.]*)\s*(reaction|j'aime|like)", text, re.IGNORECASE)
+                if r_match:
+                    reactions = int(re.sub(r"[\s,.]", "", r_match.group(1)))
+                c_match = re.search(r"(\d[\d\s,.]*)\s*comment", text, re.IGNORECASE)
+                if c_match:
+                    comments = int(re.sub(r"[\s,.]", "", c_match.group(1)))
+
+            posts.append({
+                "content": content,
+                "date": date,
+                "url": post_url,
+                "is_repost": is_repost,
+                "engagement": {"reactions": reactions, "comments": comments},
+            })
+
+        return posts
+
     async def search_companies(self, query: str, limit: int = 5) -> List[dict]:
         """
         Search companies on LinkedIn.
@@ -512,15 +622,12 @@ class LinkedInClient(BrowserClient):
         companies = []
         seen_slugs = set()
 
-        cards = await self.query_selector_all("[data-chameleon-result-urn]")
+        # Find all company links and extract info from their parent containers
+        links = await self.query_selector_all('a[href*="/company/"]')
 
-        for card in cards:
+        for link in links:
             if len(companies) >= limit:
                 break
-
-            link = await card.query_selector('a[href*="/company/"]')
-            if not link:
-                continue
 
             href = await link.get_attribute("href")
             if not href or "/company/" not in href:
@@ -531,24 +638,28 @@ class LinkedInClient(BrowserClient):
                 continue
 
             slug = match.group(1)
-            if slug in seen_slugs:
+            if slug in seen_slugs or slug in ("login", "signup"):
                 continue
             seen_slugs.add(slug)
 
-            url = f"https://www.linkedin.com/company/{slug}/"
-
-            name = ""
-            name_el = await card.query_selector(".t-roman")
-            if name_el:
-                name = (await name_el.inner_text()).strip()
-
-            if not name:
+            # Get text from the link or its parent
+            text = (await link.inner_text()).strip()
+            if not text or len(text) < 2:
                 continue
 
-            headline = ""
-            headline_el = await card.query_selector(".t-black--light")
-            if headline_el:
-                headline = (await headline_el.inner_text()).strip()
+            # First non-empty line is usually the name
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            if not lines:
+                continue
+
+            name = lines[0]
+            # Skip nav/button text
+            if name.lower() in ["follow", "suivre", "message", "view", "voir"]:
+                continue
+
+            headline = lines[1] if len(lines) > 1 else ""
+
+            url = f"https://www.linkedin.com/company/{slug}/"
 
             companies.append({
                 "name": name,

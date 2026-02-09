@@ -38,6 +38,7 @@ class CollectiveClient:
         scroll_until_end: bool = False,
         scroll_delay: float = 3.0,
         screenshot_path: Optional[str] = None,
+        seen_ids: Optional[set[str]] = None,
     ) -> dict:
         """
         Scrape job listings from Collective.work.
@@ -48,6 +49,7 @@ class CollectiveClient:
             scroll_until_end: Keep scrolling until no new jobs are loaded.
             scroll_delay: Delay in seconds between scrolls.
             screenshot_path: Optional path to save screenshot.
+            seen_ids: Set of jobIds already seen. Stops scrolling when a seen ID is found.
 
         Returns:
             Dict with timestamp, url, total_results, and jobs list.
@@ -71,7 +73,8 @@ class CollectiveClient:
                 prev_total = 0
                 scroll_num = 0
                 no_change_count = 0
-                while no_change_count < 3:  # Stop after 3 scrolls with no new jobs
+                found_seen = False
+                while no_change_count < 3 and not found_seen:  # Stop after 3 scrolls with no new jobs or when seen ID found
                     raw_text = await browser.get_text()
                     current_jobs = self._parse_jobs(raw_text)
                     # Extract jobIds from visible links
@@ -85,6 +88,11 @@ class CollectiveClient:
                     for jid in job_ids:
                         if jid not in all_job_ids:
                             all_job_ids.append(jid)
+                        # Check if we've seen this ID before
+                        if seen_ids and jid in seen_ids:
+                            found_seen = True
+                            print(f"Found seen ID {jid}, stopping scroll", file=sys.stderr)
+                            break
                     for job in current_jobs:
                         all_jobs[job["id"]] = job
                     scroll_num += 1
@@ -94,7 +102,8 @@ class CollectiveClient:
                     else:
                         no_change_count = 0
                     prev_total = len(all_jobs)
-                    await browser.scroll_element(scroll_selector, times=1, delay=scroll_delay)
+                    if not found_seen:
+                        await browser.scroll_element(scroll_selector, times=1, delay=scroll_delay)
                 print(f"Fin du scroll après {scroll_num} scrolls", file=sys.stderr)
                 jobs = list(all_jobs.values())
             else:
@@ -291,7 +300,15 @@ async def main():
     parser.add_argument("--scroll-delay", type=float, default=3.0, help="Delay between scrolls (seconds)")
     parser.add_argument("--screenshot", help="Screenshot output path")
     parser.add_argument("--output", "-o", help="Output JSON file path")
+    parser.add_argument("--seen-file", help="JSON file with seen IDs (stops scrolling when a seen ID is found)")
     args = parser.parse_args()
+
+    # Load seen IDs if provided
+    seen_ids = None
+    if args.seen_file:
+        seen_data = json.loads(Path(args.seen_file).read_text())
+        seen_ids = set(seen_data.get("ids", []))
+        print(f"Loaded {len(seen_ids)} seen IDs", file=sys.stderr)
 
     client = CollectiveClient(profile_path=args.profile, headless=not args.visible)
     result = await client.scrape_jobs(
@@ -300,6 +317,7 @@ async def main():
         scroll_until_end=args.scroll_until_end,
         scroll_delay=args.scroll_delay,
         screenshot_path=args.screenshot,
+        seen_ids=seen_ids,
     )
 
     output = json.dumps(result, indent=2, ensure_ascii=False)

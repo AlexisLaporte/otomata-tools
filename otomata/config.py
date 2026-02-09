@@ -67,9 +67,10 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
     Get a secret value from config files (CLI mode).
 
     Search order:
-    1. Project secrets: .otomata/secrets.env in CWD or parents
-    2. User secrets: ~/.otomata/secrets.env
-    3. Default value
+    1. Environment variable (set by worker, systemd, etc.)
+    2. Project secrets: .otomata/secrets.env in CWD or parents
+    3. User secrets: ~/.otomata/secrets.env
+    4. Default value
 
     Note: For library usage, pass secrets explicitly via constructor
     (e.g., SireneClient(api_key='...')). This function is for CLI mode only.
@@ -81,14 +82,19 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
     Returns:
         Secret value or default
     """
-    # 1. Project secrets
+    # 1. Environment variable (highest priority — set by worker, systemd, etc.)
+    env_val = os.environ.get(name)
+    if env_val:
+        return env_val
+
+    # 2. Project secrets
     project_secrets = _find_project_secrets()
     if project_secrets:
         secrets = _parse_env_file(project_secrets)
         if name in secrets:
             return secrets[name]
 
-    # 2. User secrets
+    # 3. User secrets
     user_secrets = _get_user_secrets()
     secrets = _parse_env_file(user_secrets)
     if name in secrets:

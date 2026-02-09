@@ -578,7 +578,7 @@ def kaspr_enrich(
     linkedin_slug: str = typer.Argument(..., help="LinkedIn profile slug"),
     name: Optional[str] = typer.Option(None, "--name", help="Person full name"),
 ):
-    """Enrich a LinkedIn profile with Kaspr (email, phone)."""
+    """Enrich a LinkedIn profile with Kaspr (email, phone). Requests work emails only by default."""
     import json
     from otomata.tools.kaspr import KasprClient
 

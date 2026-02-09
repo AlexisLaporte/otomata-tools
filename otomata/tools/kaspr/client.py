@@ -34,7 +34,8 @@ class KasprClient:
         url = f"{self.BASE_URL}/{endpoint}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "accept-version": "v2.0",
         }
 
         response = requests.request(method, url, headers=headers, **kwargs)
@@ -69,12 +70,11 @@ class KasprClient:
         Returns:
             Enriched profile with emails and phones
         """
-        data = {"linkedinId": linkedin_id}
+        data = {"id": linkedin_id}
         if name:
             data["name"] = name
         if is_phone_required:
             data["isPhoneRequired"] = True
-        if data_to_get:
-            data["dataToGet"] = data_to_get
+        data["dataToGet"] = data_to_get or ["workEmail", "phone"]
 
-        return self._request("POST", "linkedin-profile-data", json=data)
+        return self._request("POST", "profile/linkedin", json=data)

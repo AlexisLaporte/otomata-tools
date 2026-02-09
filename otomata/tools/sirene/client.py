@@ -148,11 +148,15 @@ class SireneClient:
         return " AND ".join(conditions)
 
     def _build_siret_query(self, params: Dict[str, Any]) -> str:
-        """Build Sirene search query string for SIRET endpoint."""
+        """Build Sirene search query string for SIRET endpoint.
+
+        Periodic fields (NAF, status, employees, legal category, dates)
+        must be wrapped in periode() on the SIRET endpoint.
+        """
         conditions = []
 
         if params.get("active_only", True):
-            conditions.append("etatAdministratifEtablissement:A")
+            conditions.append("periode(etatAdministratifEtablissement:A)")
 
         if params.get("headquarters_only", False):
             conditions.append("etablissementSiege:true")
@@ -162,19 +166,19 @@ class SireneClient:
             naf_q = []
             for code in naf_codes:
                 if len(code) == 2 and code.isdigit():
-                    naf_q.append(f"activitePrincipaleEtablissement:{code}.*")
+                    naf_q.append(f"periode(activitePrincipaleEtablissement:{code}.*)")
                 else:
-                    naf_q.append(f"activitePrincipaleEtablissement:{code}")
+                    naf_q.append(f"periode(activitePrincipaleEtablissement:{code})")
             conditions.append(f"({' OR '.join(naf_q)})")
 
         emp_ranges = params.get("employee_ranges")
         if emp_ranges:
-            emp_q = " OR ".join([f"trancheEffectifsEtablissement:{r}" for r in emp_ranges])
+            emp_q = " OR ".join([f"periode(trancheEffectifsEtablissement:{r})" for r in emp_ranges])
             conditions.append(f"({emp_q})")
 
         legal_cats = params.get("legal_categories", [])
         if legal_cats:
-            cat_q = " OR ".join([f"uniteLegale.categorieJuridiqueUniteLegale:{c}" for c in legal_cats])
+            cat_q = " OR ".join([f"periode(uniteLegale.categorieJuridiqueUniteLegale:{c})" for c in legal_cats])
             conditions.append(f"({cat_q})")
 
         postal_code = params.get("postal_code")
@@ -193,11 +197,11 @@ class SireneClient:
         date_max = params.get("created_before")
         if date_min or date_max:
             if date_min and date_max:
-                conditions.append(f"dateCreationEtablissement:[{date_min} TO {date_max}]")
+                conditions.append(f"periode(dateCreationEtablissement:[{date_min} TO {date_max}])")
             elif date_min:
-                conditions.append(f"dateCreationEtablissement:[{date_min} TO *]")
+                conditions.append(f"periode(dateCreationEtablissement:[{date_min} TO *])")
             elif date_max:
-                conditions.append(f"dateCreationEtablissement:[* TO {date_max}]")
+                conditions.append(f"periode(dateCreationEtablissement:[* TO {date_max}])")
 
         return " AND ".join(conditions)
 
