@@ -16,7 +16,52 @@ from urllib.parse import quote
 
 from .lib.browser_client import BrowserClient
 from ..common.rate_limiter import LinkedInRateLimiter
-from ...config import get_sessions_dir
+from ...config import get_sessions_dir, get_secret
+
+
+def get_worker_cookie(
+    api_url: str = None,
+    api_key: str = None,
+    action: str = "profile_visit",
+) -> dict:
+    """Fetch LinkedIn cookie from otomata-worker API.
+
+    Args:
+        api_url: Worker API URL (default: OTOMATA_API_URL secret)
+        api_key: API key (default: OTOMATA_API_KEY secret)
+        action: Action type for rate limit check
+
+    Returns:
+        {"cookie": str, "user_agent": str|None, "identity_name": str, "account_type": str}
+
+    Raises:
+        RuntimeError: If worker is unreachable or no identity available
+    """
+    import urllib.request
+
+    url = api_url or get_secret("OTOMATA_API_URL")
+    key = api_key or get_secret("OTOMATA_API_KEY")
+
+    if not url:
+        raise RuntimeError(
+            "OTOMATA_API_URL not set. Configure it in env or ~/.otomata/secrets.env"
+        )
+
+    endpoint = f"{url.rstrip('/')}/identities/available?platform=linkedin&action={action}"
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["X-API-Key"] = key
+
+    req = urllib.request.Request(endpoint, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise RuntimeError("No available LinkedIn identity on worker") from e
+        raise RuntimeError(f"Worker API error: {e.code}") from e
+    except Exception as e:
+        raise RuntimeError(f"Cannot reach worker at {url}: {e}") from e
 
 
 # Semaphore: max concurrent sessions PER IDENTITY
