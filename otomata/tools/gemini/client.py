@@ -192,3 +192,52 @@ class GeminiClient:
                 }
 
         return {"status": "error", "error": "No image data in response"}
+
+    def edit_image(
+        self,
+        prompt: str,
+        image_b64: str,
+        image_mime: str = "image/jpeg",
+        model: str = "gemini-2.5-flash-image",
+    ) -> Dict[str, Any]:
+        """
+        Edit/transform an image using Gemini (base64 in/out).
+
+        Args:
+            prompt: Instructions for the transformation
+            image_b64: Base64-encoded input image (no data: prefix)
+            image_mime: MIME type of the input image
+            model: Model to use
+
+        Returns:
+            Dict with status, data (base64), mime_type — or status, error
+        """
+        payload = {
+            "contents": [{"role": "user", "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": image_mime, "data": image_b64}},
+            ]}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE", "TEXT"],
+            },
+        }
+
+        resp = requests.post(self._url(model, "generateContent"), json=payload, timeout=120)
+        if not resp.ok:
+            return {"status": "error", "error": f"Gemini API error: {resp.status_code} {resp.text[:200]}"}
+
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return {"status": "error", "error": "No candidates (content may have been filtered)"}
+
+        for part in candidates[0].get("content", {}).get("parts", []):
+            inline = part.get("inlineData") or part.get("inline_data")
+            if inline:
+                return {
+                    "status": "success",
+                    "data": inline["data"],
+                    "mime_type": inline.get("mimeType") or inline.get("mime_type") or "image/png",
+                }
+
+        return {"status": "error", "error": "No image in response (content may have been filtered)"}
