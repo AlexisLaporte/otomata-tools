@@ -231,7 +231,9 @@ class GeminiClient:
         if not candidates:
             return {"status": "error", "error": "No candidates (content may have been filtered)"}
 
-        for part in candidates[0].get("content", {}).get("parts", []):
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text_parts = []
+        for part in parts:
             inline = part.get("inlineData") or part.get("inline_data")
             if inline:
                 return {
@@ -239,5 +241,12 @@ class GeminiClient:
                     "data": inline["data"],
                     "mime_type": inline.get("mimeType") or inline.get("mime_type") or "image/png",
                 }
+            if part.get("text"):
+                text_parts.append(part["text"])
 
-        return {"status": "error", "error": "No image in response (content may have been filtered)"}
+        reason = candidates[0].get("finishReason", "")
+        detail = "; ".join(text_parts) if text_parts else ""
+        msg = f"No image in response (finishReason={reason})"
+        if detail:
+            msg += f": {detail[:300]}"
+        return {"status": "error", "error": msg}
