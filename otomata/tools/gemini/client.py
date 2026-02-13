@@ -200,6 +200,7 @@ class GeminiClient:
         image_mime: str = "image/jpeg",
         model: str = "gemini-2.5-flash-image",
         reference_images: List[Dict[str, str]] | None = None,
+        image_size: str | None = None,
     ) -> Dict[str, Any]:
         """
         Edit/transform an image using Gemini (base64 in/out).
@@ -211,6 +212,7 @@ class GeminiClient:
             model: Model to use
             reference_images: Optional list of {"data": b64, "mime_type": str} dicts
                 inserted before the subject image as style references
+            image_size: Optional output size — e.g. "1024x1024", "2048x2048"
 
         Returns:
             Dict with status, data (base64), mime_type — or status, error
@@ -221,11 +223,15 @@ class GeminiClient:
                 parts.append({"inline_data": {"mime_type": ref["mime_type"], "data": ref["data"]}})
         parts.append({"inline_data": {"mime_type": image_mime, "data": image_b64}})
 
+        gen_config = {
+            "responseModalities": ["IMAGE", "TEXT"],
+        }
+        if image_size:
+            gen_config["imageConfig"] = {"imageSize": image_size}
+
         payload = {
             "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE", "TEXT"],
-            },
+            "generationConfig": gen_config,
         }
 
         resp = requests.post(self._url(model, "generateContent"), json=payload, timeout=120)
