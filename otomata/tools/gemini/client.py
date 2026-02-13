@@ -199,6 +199,7 @@ class GeminiClient:
         image_b64: str,
         image_mime: str = "image/jpeg",
         model: str = "gemini-2.5-flash-image",
+        reference_images: List[Dict[str, str]] | None = None,
     ) -> Dict[str, Any]:
         """
         Edit/transform an image using Gemini (base64 in/out).
@@ -208,15 +209,20 @@ class GeminiClient:
             image_b64: Base64-encoded input image (no data: prefix)
             image_mime: MIME type of the input image
             model: Model to use
+            reference_images: Optional list of {"data": b64, "mime_type": str} dicts
+                inserted before the subject image as style references
 
         Returns:
             Dict with status, data (base64), mime_type — or status, error
         """
+        parts = [{"text": prompt}]
+        if reference_images:
+            for ref in reference_images:
+                parts.append({"inline_data": {"mime_type": ref["mime_type"], "data": ref["data"]}})
+        parts.append({"inline_data": {"mime_type": image_mime, "data": image_b64}})
+
         payload = {
-            "contents": [{"role": "user", "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": image_mime, "data": image_b64}},
-            ]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseModalities": ["IMAGE", "TEXT"],
             },
