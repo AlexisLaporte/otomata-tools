@@ -1,188 +1,94 @@
 # Otomata Tools
 
-CLI et librairie Python pour l'automatisation : Google Workspace, Notion, Sirene (entreprises françaises), et plus.
+Boîte à outils Python open-source pour l'automatisation business par agents IA. Chaque outil est utilisable en **CLI** (scripts standalone) ou en **librairie** (import dans vos agents/workers).
 
-## Installation
+Fait partie de l'écosystème [otomata.tech](https://otomata.tech) — les outils sont la couche d'exécution que les agents utilisent pour agir sur le monde réel.
 
-```bash
-# CLI uniquement
-pipx install git+https://github.com/AlexisLaporte/otomata-tools.git
+## Outils disponibles
 
-# Dans un projet Python (dernière version)
-pip install git+https://github.com/AlexisLaporte/otomata-tools.git
+| Catégorie | Outils | Auth |
+|-----------|--------|------|
+| **Google Workspace** | Drive, Docs, Sheets, Slides | Service Account |
+| **Gmail** | Lire, rechercher, envoyer | OAuth2 user |
+| **Notion** | Pages, databases, search | API key |
+| **Entreprises FR** | Sirene (INSEE), Recherche Entreprises, stock local | API key |
+| **Prospection** | Kaspr, Hunter, Apollo, ClearBit, Lemlist | API keys |
+| **Browser** | LinkedIn, Crunchbase, Pappers, Indeed, G2 | Session cookies |
+| **Communication** | Slack, Resend (email) | API keys |
+| **IA** | Anthropic (admin/batch), Groq, Mistral, Gemini | API keys |
+| **Compta** | Pennylane | API key |
+| **Search** | Serper, SerpAPI | API key |
+| **Media** | Unsplash, Figma | API keys |
 
-# Pinner une version
-pip install git+https://github.com/AlexisLaporte/otomata-tools.git@v0.2.0
+## Principe : zéro secret dans le repo
 
-# Avec extras
-pip install "otomata[stock] @ git+https://github.com/AlexisLaporte/otomata-tools.git"
+Les outils ne stockent aucun secret. Les credentials sont fournies par :
+- **L'appelant** (mode librairie) : injection explicite au constructeur
+- **L'environnement** (mode CLI) : variables d'env ou `~/.otomata/secrets.env`
+
+```python
+# Mode librairie — l'appelant (worker, agent) gère ses secrets
+from otomata.tools.sirene import SireneClient
+client = SireneClient(api_key="xxx")
+
+from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+client = GmailClient(credentials=oauth_creds)
 ```
 
-### Extras disponibles
-
-| Extra | Description |
-|-------|-------------|
-| `browser` | Browser automation (Patchright) |
-| `stock` | Sirene stock file (pyarrow, pandas) |
-| `company-fr` | Sirene API client |
-| `ai` | Anthropic SDK |
-| `all` | Tous les extras |
-
-## Configuration des secrets
-
-### Mode CLI
-
-Les secrets sont lus depuis des fichiers `.otomata/secrets.env` :
-
-1. **Projet** : `.otomata/secrets.env` dans le répertoire courant ou parents
-2. **User** : `~/.otomata/secrets.env`
-
 ```bash
-# Créer le fichier user
+# Mode CLI — secrets résolus depuis l'environnement
 mkdir -p ~/.otomata
 cat > ~/.otomata/secrets.env << 'EOF'
 SIRENE_API_KEY=xxx
-GROQ_API_KEY=xxx
 GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}'
+GOOGLE_OAUTH_CLIENT='{"installed":{"client_id":"...","client_secret":"..."}}'
 NOTION_API_KEY=secret_xxx
 EOF
 ```
 
-### Mode librairie
+## Installation
 
-Passer les secrets explicitement :
+```bash
+pip install git+https://github.com/AlexisLaporte/otomata-tools.git
 
-```python
-from otomata.tools.sirene import SireneClient
-
-client = SireneClient(api_key="xxx")  # Pas de magie, l'appelant gère ses secrets
+# Avec extras
+pip install "otomata[browser] @ git+https://github.com/AlexisLaporte/otomata-tools.git"
+pip install "otomata[all] @ git+https://github.com/AlexisLaporte/otomata-tools.git"
 ```
 
-## Sirene - Entreprises françaises
+Extras : `browser` (Patchright), `stock` (pyarrow/pandas), `company-fr`, `ai` (Anthropic), `all`.
+
+## Utilisation
 
 ### CLI
 
 ```bash
-# Recherche entreprises (API INSEE)
-otomata sirene search --naf 62.01Z --employees 11,12 --limit 10
-
-# Détails entreprise
-otomata sirene get 443061841
-otomata sirene siret 44306184100047
-otomata sirene headquarters 443061841
-
-# Suggestion codes NAF (IA)
-otomata sirene suggest-naf "développement logiciel SaaS"
-
-# Recherche enrichie (dirigeants, finances) - API data.gouv
-otomata sirene entreprises "unitag" --ca-min 100000
-
-# Stock file (~2GB, batch local)
-otomata sirene stock status
-otomata sirene stock download
-otomata sirene stock addresses 443061841,552032534
+otomata google drive-list --folder-id xxx
+otomata google drive-download <file-id> output.pdf
+otomata sirene search --naf 62.01Z --limit 10
+otomata kaspr enrich --linkedin-slug "john-doe-123"
+otomata notion search "query"
+otomata hunter domain example.com
 ```
 
 ### Librairie
 
 ```python
-from otomata.tools.sirene import SireneClient, EntreprisesClient, SireneStock
-
-# API INSEE Sirene
-client = SireneClient(api_key="xxx")
-results = client.search(naf=["62.01Z"], employees=["11", "12"], limit=50)
-company = client.get_by_siren("443061841")
-hq = client.get_headquarters("443061841")
-
-# API Recherche Entreprises (data.gouv) - pas de clé requise
-entreprises = EntreprisesClient()
-results = entreprises.search(query="unitag", ca_min=100000)
-directors = entreprises.get_directors("443061841")
-
-# Stock file (batch, ~2GB local)
-stock = SireneStock()
-stock.download()  # Une fois, télécharge ~2GB
-addresses = stock.get_headquarters_addresses(["443061841", "552032534"])
-```
-
-### NAF Suggester
-
-```python
-from otomata.tools.groq import GroqClient
-from otomata.tools.naf import NAFSuggester
-
-groq = GroqClient(api_key="xxx")
-suggester = NAFSuggester(groq_client=groq)
-suggestions = suggester.suggest("restaurant italien", limit=3)
-
-for s in suggestions:
-    print(f"{s.code} - {s.label} ({s.confidence:.0%})")
-```
-
-## Google Workspace
-
-```bash
-otomata google drive-list --folder-id=xxx
-otomata google drive-download <file-id> output.pdf
-otomata google docs-headings <doc-id>
-```
-
-```python
 from otomata.tools.google.drive.lib.drive_client import DriveClient
+files = DriveClient().list_files(folder_id="xxx")
 
-drive = DriveClient()  # Utilise GOOGLE_SERVICE_ACCOUNT
-files = drive.list_files(folder_id="xxx")
+from otomata.tools.sirene import SireneClient
+results = SireneClient(api_key="xxx").search(naf=["62.01Z"], limit=50)
+
+from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+client = GmailClient()
+client.send(to="a@b.com", subject="Test", body="Hello")
 ```
 
-## Notion
+## Setup Google
 
-```bash
-otomata notion search "query"
-otomata notion page <page-id> --blocks
-otomata notion database <db-id> --query
-```
-
-```python
-from otomata.tools.notion.lib.notion_client import NotionClient
-
-notion = NotionClient()  # Utilise NOTION_API_KEY
-results = notion.search("query")
-```
-
-## Browser automation
-
-Pour les sites sans API publique (LinkedIn, Crunchbase, etc.) :
-
-```python
-from otomata.tools.browser import BrowserClient
-
-async with BrowserClient(profile_path="~/.otomata/sessions/linkedin") as browser:
-    await browser.goto("https://linkedin.com")
-    # Session cookies persistés dans profile_path
-```
-
-## Versioning
-
-La version est définie dans `otomata/__init__.py` (`__version__`). `pyproject.toml` la lit dynamiquement via hatchling.
-
-Au premier import, otomata vérifie en arrière-plan si une nouvelle version existe sur GitHub (API releases, timeout 3s, non-bloquant). Si oui, un `warnings.warn` s'affiche avec la commande d'upgrade.
-
-Désactiver le check :
-
-```bash
-OTOMATA_NO_UPDATE_CHECK=1 python mon_script.py
-```
-
-### Publier une nouvelle version
-
-```bash
-# 1. Bumper __version__ dans otomata/__init__.py
-# 2. Commit + push
-# 3. Tag + release
-git tag v0.X.0
-git push origin v0.X.0
-gh release create v0.X.0 --title "v0.X.0" --notes "..."
-```
+- **Drive, Docs, Sheets, Slides** (Service Account) : [docs/google-service-account-setup.md](docs/google-service-account-setup.md)
+- **Gmail** (OAuth2 user) : [docs/gmail-oauth-setup.md](docs/gmail-oauth-setup.md)
 
 ## Développement
 
@@ -190,7 +96,14 @@ gh release create v0.X.0 --title "v0.X.0" --notes "..."
 git clone https://github.com/AlexisLaporte/otomata-tools.git
 cd otomata-tools
 pip install -e ".[dev,all]"
+otomata config  # Vérifier les secrets détectés
+```
 
-# Vérifier config
-otomata config
+## Versioning
+
+Version dans `otomata/__init__.py`. Auto-update check au premier import (désactiver : `OTOMATA_NO_UPDATE_CHECK=1`).
+
+```bash
+git tag v0.X.0 && git push origin v0.X.0
+gh release create v0.X.0 --title "v0.X.0" --notes "..."
 ```
