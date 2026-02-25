@@ -11,7 +11,7 @@ app = typer.Typer(
 
 
 # Google subcommands
-google_app = typer.Typer(help="Google Workspace tools (Drive, Docs, Sheets, Slides)")
+google_app = typer.Typer(help="Google Workspace tools (Drive, Docs, Sheets, Slides, Gmail)")
 app.add_typer(google_app, name="google")
 
 
@@ -56,6 +56,128 @@ def google_docs_headings(
     client = DocsClient()
     headings = client.list_headings(doc_id)
     print(json.dumps(headings, indent=2))
+
+
+@google_app.command("auth")
+def google_auth(
+    name: str = typer.Argument("default", help="Account name (e.g. 'gmail', 'work')"),
+    list_accounts: bool = typer.Option(False, "--list", "-l", help="List configured accounts"),
+):
+    """Set up or list Google OAuth accounts."""
+    from otomata.tools.google.credentials import list_accounts as _list_accounts, setup_account
+    from otomata.tools.google.gmail.lib.gmail_client import SCOPES
+
+    if list_accounts:
+        accounts = _list_accounts()
+        if not accounts:
+            print("No accounts configured. Run: otomata google auth <name>")
+        else:
+            for a in accounts:
+                print(f"  {a}")
+        return
+
+    print(f"Setting up account '{name}'... Opening browser for Google consent.")
+    setup_account(name, SCOPES)
+    print(f"Account '{name}' configured.")
+
+
+@google_app.command("gmail-list")
+def google_gmail_list(
+    query: Optional[str] = typer.Option(None, help="Gmail search query"),
+    label: Optional[str] = typer.Option(None, help="Filter by label ID"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max messages"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """List recent Gmail messages."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    label_ids = [label] if label else None
+    messages = client.list_messages(query=query, label_ids=label_ids, max_results=limit)
+    print(json.dumps({"count": len(messages), "messages": messages}, indent=2, ensure_ascii=False))
+
+
+@google_app.command("gmail-search")
+def google_gmail_search(
+    query: str = typer.Argument(..., help="Gmail search query (e.g. 'is:unread', 'from:user@example.com')"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max messages"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Search Gmail messages."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    messages = client.search(query=query, max_results=limit)
+    print(json.dumps({"count": len(messages), "messages": messages}, indent=2, ensure_ascii=False))
+
+
+@google_app.command("gmail-get")
+def google_gmail_get(
+    message_id: str = typer.Argument(..., help="Gmail message ID"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Read a Gmail message."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    message = client.get_message(message_id)
+    print(json.dumps(message, indent=2, ensure_ascii=False))
+
+
+@google_app.command("gmail-attachments")
+def google_gmail_attachments(
+    message_id: str = typer.Argument(..., help="Gmail message ID"),
+    output: str = typer.Option(".", "--output", "-o", help="Output directory"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Download attachments from a Gmail message."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    files = client.download_attachments(message_id, output)
+    print(json.dumps({"count": len(files), "files": files}, indent=2, ensure_ascii=False))
+
+
+@google_app.command("gmail-draft")
+def google_gmail_draft(
+    to: str = typer.Option(..., help="Recipient email"),
+    subject: str = typer.Option(..., help="Email subject"),
+    body: str = typer.Option(..., help="Email body (plain text)"),
+    cc: Optional[str] = typer.Option(None, help="CC recipients"),
+    bcc: Optional[str] = typer.Option(None, help="BCC recipients"),
+    attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Create a draft email in Gmail."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    result = client.create_draft(to=to, subject=subject, body=body, cc=cc, bcc=bcc, attachments=attach)
+    print(json.dumps(result, indent=2))
+
+
+@google_app.command("gmail-send")
+def google_gmail_send(
+    to: str = typer.Option(..., help="Recipient email"),
+    subject: str = typer.Option(..., help="Email subject"),
+    body: str = typer.Option(..., help="Email body (plain text)"),
+    cc: Optional[str] = typer.Option(None, help="CC recipients"),
+    bcc: Optional[str] = typer.Option(None, help="BCC recipients"),
+    attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Send an email via Gmail."""
+    from otomata.tools.google.gmail.lib.gmail_client import GmailClient
+    import json
+
+    client = GmailClient(account=account)
+    result = client.send(to=to, subject=subject, body=body, cc=cc, bcc=bcc, attachments=attach)
+    print(json.dumps(result, indent=2))
 
 
 @google_app.command("docs-section")
@@ -775,10 +897,18 @@ FRENCH COMPANY DATA (SIRENE)
   otomata sirene suggest-naf "description"          Suggest NAF codes (AI)
 
 GOOGLE WORKSPACE
+  otomata google auth [NAME]                        Set up OAuth account (opens browser)
+  otomata google auth --list                        List configured accounts
   otomata google drive-list [--folder-id ...]       List Drive files
   otomata google drive-download <FILE_ID> <PATH>    Download from Drive
   otomata google docs-headings <DOC_ID>             List headings in a Doc
   otomata google docs-section <DOC_ID> <HEADING>    Get section content
+  otomata google gmail-list [--query ...] [-a acct] List Gmail messages
+  otomata google gmail-search <QUERY> [-a acct]     Search Gmail
+  otomata google gmail-get <MESSAGE_ID> [-a acct]   Read a message
+  otomata google gmail-attachments <ID> [-o dir]    Download attachments
+  otomata google gmail-draft --to ... [-f file]     Create a draft
+  otomata google gmail-send --to ... [-f file]      Send an email
 
 NOTION
   otomata notion search <QUERY>                     Search Notion
@@ -983,6 +1113,7 @@ def show_config():
     print("Secrets status:")
     secrets = [
         "GOOGLE_SERVICE_ACCOUNT",
+        "GOOGLE_OAUTH_CLIENT",
         "NOTION_API_KEY",
         "LINKEDIN_COOKIE",
         "SIRENE_API_KEY",
