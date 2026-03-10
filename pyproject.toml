@@ -3,10 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "otomata"
+name = "oto"
 dynamic = ["version"]
 description = "CLI tools for automating tasks with Google, Notion, and more"
-readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -18,12 +17,13 @@ dependencies = [
     "google-auth>=2.0.0",
     "google-auth-oauthlib>=1.0.0",
     "google-api-python-client>=2.0.0",
+    "gkeepapi>=0.16.0",
     "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
 browser = [
-    "patchright>=1.0.0",
+    "o-browser",
 ]
 marketing = [
     "requests>=2.28.0",
@@ -55,19 +55,14 @@ pennylane = [
     "requests>=2.28.0",
 ]
 all = [
-    "otomata[browser,marketing,crm,communication,company-fr,search,media,ai,pennylane]",
-]
-dev = [
-    "pytest>=7.0.0",
-    "black",
-    "ruff",
+    "oto[browser,marketing,crm,communication,company-fr,search,media,ai,pennylane]",
 ]
 
 [project.scripts]
-otomata = "otomata.cli:app"
+oto = "oto.cli:main"
 
 [tool.hatch.version]
-path = "otomata/__init__.py"
+path = "oto/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["otomata"]
+packages = ["oto"]
