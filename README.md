@@ -1,139 +1,130 @@
-# Oto
+# oto — CLI toolkit for AI agents
 
-CLI for business automation — Google Workspace, browser scraping, company data, AI, CRM, and more. Designed for humans and AI agents.
+Your LLM already uses `gh` for GitHub, `aws` for AWS, `gcloud` for GCP.
+**oto** covers the long tail — the SaaS products that don't have a CLI.
+
+Each connector ships with a **SKILL.md** — an instruction manual that teaches your AI agent how to use it. Run `oto skills enable --all` and your Claude Code / Cursor / Aider gets instant context on 15+ APIs.
+
+## Why CLI over MCP?
+
+| | CLI | MCP |
+|---|---|---|
+| Token cost | ~80 tokens (prompt + `--help`) | 4-32x more (full schema in context) |
+| Reliability | 100% | ~72% ([source](https://scalekit.com)) |
+| Setup | `pipx install oto-cli` | Server + transport + config |
+| Composability | Pipes: `oto sirene search "fintech" \| jq '.[]'` | None |
+| Works with | Every LLM, every framework | MCP-compatible clients only |
 
 ## Installation
 
 ```bash
-# CLI (standalone)
-pipx install git+https://github.com/AlexisLaporte/oto.git
+# Standalone CLI
+pipx install oto-cli
 
-# As a dependency
-pip install git+https://github.com/AlexisLaporte/oto.git
+# With specific connectors
+pipx install "oto-cli[google,browser]"
 
-# With extras
-pip install "oto[browser,ai] @ git+https://github.com/AlexisLaporte/oto.git"
+# All connectors
+pipx install "oto-cli[all]"
+
+# Development
+git clone https://github.com/AlexisLaporte/oto.git
+cd oto && pip install -e ".[all]"
 ```
 
-### Extras
+## Connectors
 
-| Extra | What it adds |
-|-------|-------------|
-| `browser` | Patchright (undetectable Playwright) |
-| `stock` | pyarrow + pandas for SIRENE bulk data |
-| `company-fr` | French company API clients |
-| `ai` | Anthropic + Mistral SDKs |
-| `communication` | Resend email |
-| `marketing` | Marketing tools |
-| `crm` | CRM clients |
-| `search` | Web search APIs |
-| `media` | Media APIs |
-| `pennylane` | Pennylane accounting |
-| `all` | Everything above |
+| Command | What it does | Extra |
+|---------|-------------|-------|
+| `oto google` | Gmail, Drive, Docs, Sheets, Slides, Calendar | `google` |
+| `oto browser` | LinkedIn, Crunchbase, Pappers, Indeed, G2 | `browser` |
+| `oto notion` | Search, pages, databases | — |
+| `oto sirene` | French company data (INSEE SIRENE) | — |
+| `oto search` | Web & news search (Serper/Google) | — |
+| `oto enrichment` | Contact enrichment (Kaspr, Hunter, Lemlist) | — |
+| `oto pennylane` | Accounting (Pennylane API) | — |
+| `oto anthropic` | API usage & cost tracking | `anthropic` |
+| `oto whatsapp` | Send & read WhatsApp messages | — |
+| `oto folk` | Folk CRM (contacts, companies, deals) | — |
+| `oto company` | French company lookup (multi-source) | — |
+| `oto audio` | Audio recording, transcription, summaries | — |
 
-## Configuration
+Connectors without an "Extra" only need `requests` (included in base install).
 
-Secrets are loaded from `.otomata/secrets.env` files:
-
-1. **Environment variables** (highest priority)
-2. **Project** — `.otomata/secrets.env` in current directory (walks up 4 levels)
-3. **User** — `~/.otomata/secrets.env`
+## Quick start
 
 ```bash
+# Configure secrets
 mkdir -p ~/.otomata
 cat > ~/.otomata/secrets.env << 'EOF'
-SIRENE_API_KEY=xxx
-NOTION_API_KEY=secret_xxx
 SERPER_API_KEY=xxx
+NOTION_API_KEY=secret_xxx
+SIRENE_API_KEY=xxx
 EOF
-```
 
-Check status:
-
-```bash
+# Check config
 oto config
-```
 
-## Quick Reference
-
-```bash
-# Google Workspace (OAuth multi-account)
-oto google auth myaccount              # Setup OAuth
-oto google auth --list                 # List accounts
-oto google gmail-search "from:bob" -a myaccount
-oto google gmail-send --to bob@x.com --subject "Hi" --body "Hello"
-oto google gmail-draft --body "Draft" --reply-to MSG_ID
-oto google drive-list --folder-id xxx
-oto google docs-headings DOC_ID
-oto google calendar-today -a myaccount
-oto google calendar-upcoming --days 7
-
-# Browser automation
-oto browser linkedin-profile https://linkedin.com/in/someone
-oto browser linkedin-company https://linkedin.com/company/example
-oto browser crunchbase-company example
-oto browser pappers-siren 443061841
-oto browser indeed-search "python developer" --location Paris
-
-# French company data (SIRENE)
-oto sirene search "otomata"
-oto sirene get 443061841
-oto company 443061841
-
-# Web search
+# Search the web
 oto search web "AI agents 2026"
-oto search news "Series A"
 
-# Notion
-oto notion search "quarterly report"
-oto notion page PAGE_ID --blocks
+# Google OAuth setup (per account)
+oto google auth myaccount
+oto google gmail-search "from:bob" -a myaccount
 
-# Enrichment
-oto enrichment kaspr-enrich LINKEDIN_ID
-oto enrichment hunter-domain example.com
+# Browse LinkedIn
+oto browser linkedin profile https://linkedin.com/in/someone
 
-# Accounting
-oto pennylane trial-balance --start 2025-01-01 --end 2025-12-31
-
-# Anthropic usage
-oto anthropic today
-oto anthropic cost --days 30
-
-# WhatsApp
-oto whatsapp send "Contact Name" "Hello!"
-oto whatsapp chats
+# French company data
+oto sirene search "fintech"
 ```
 
-## Claude Code Skills
+## Skills for AI agents
 
-Oto ships with 9 skills for Claude Code:
+The killer feature: each connector comes with a SKILL.md that teaches your LLM how to use it.
 
 ```bash
-oto skills list              # See available skills
-oto skills enable --all      # Enable all (symlinks to ~/.claude/skills/)
-oto skills disable oto-pennylane
+# Enable all skills for Claude Code
+oto skills enable --all
+
+# Or pick specific ones
+oto skills enable oto-google
+oto skills enable oto-search
 ```
 
-| Skill | Description |
-|-------|-------------|
-| `oto-anthropic` | Anthropic API usage and cost tracking |
-| `oto-browser` | Browser automation + LinkedIn, Crunchbase, Pappers, Indeed, G2 |
-| `oto-enrichment` | Contact enrichment (Kaspr, Hunter, Lemlist) |
-| `oto-google` | Gmail, Drive, Docs, Calendar |
-| `oto-notion` | Notion workspace |
-| `oto-pennylane` | Pennylane accounting |
-| `oto-search` | Web and news search (Serper) |
-| `oto-sirene` | SIRENE INSEE company data |
-| `oto-whatsapp` | WhatsApp messaging |
+Once enabled, your AI agent sees these instructions in its context and knows exactly which `oto` commands to use, with what arguments, and what output to expect.
 
-## Development
+## Create your own connector
 
-```bash
-git clone https://github.com/AlexisLaporte/oto.git
-cd oto
-pip install -e ".[all]"
-oto config
+A connector is 3 files:
+
 ```
+oto/commands/myservice.py    # CLI commands (Typer app)
+oto/tools/myservice/         # API client
+skills/oto-myservice/SKILL.md  # LLM instructions
+```
+
+See [docs/create-connector.md](docs/create-connector.md) for the full guide.
+
+## How it works
+
+**Auto-discovery** — `cli.py` scans `commands/` at startup. Any Python file exporting a Typer `app` becomes a sub-command. No registry, no config. Drop a file, it appears in `oto --help`.
+
+**Three types of connectors** (same CLI contract: JSON stdout, lazy imports, `get_secret()`):
+- **API** — call REST APIs via `requests`. Each client handles auth/pagination/rate-limiting as the API requires. (notion, sirene, search, pennylane, folk...)
+- **Browser** — automate a real browser for sites without an API. Async, require `oto-cli[browser]`. (linkedin, crunchbase, pappers, indeed, g2)
+- **SDK** — use an official client library. Currently Google Workspace via `google-api-python-client` + OAuth2. Require `oto-cli[google]`.
+
+**Secrets** — 3-tier resolution (first found wins):
+1. Environment variables
+2. `.otomata/secrets.env` in project directory (walks up 4 levels)
+3. `~/.otomata/secrets.env` (user-level)
+
+**Output contract** — every command prints JSON to stdout, errors to stderr. Composable with `jq`, pipes, scripts.
+
+**Lazy imports** — tool clients are imported inside functions, so the CLI starts fast regardless of how many connectors are installed.
+
+See [docs/concepts.md](docs/concepts.md) for the full architecture guide.
 
 ## License
 

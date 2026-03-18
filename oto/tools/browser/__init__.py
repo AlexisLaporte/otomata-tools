@@ -5,7 +5,11 @@ BrowserClient comes from o-browser package.
 Domain-specific clients (LinkedIn, Crunchbase...) live here.
 """
 
-from o_browser import BrowserClient
+try:
+    from o_browser import BrowserClient
+except ImportError:
+    BrowserClient = None
+
 from .linkedin import LinkedInClient
 from .crunchbase import CrunchbaseClient
 from .pappers import PappersClient

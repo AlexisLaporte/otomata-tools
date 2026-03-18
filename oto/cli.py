@@ -1,35 +1,34 @@
-"""Oto CLI - unified entry point for all tools."""
+"""Oto CLI - composable toolkit for AI agents."""
+
+import importlib
+import sys
+from pathlib import Path
 
 import typer
 
 app = typer.Typer(
     name="oto",
-    help="CLI tools for automating tasks with Google, Notion, and more.",
+    help="CLI toolkit for AI agents. JSON on stdout, composable with pipes.",
     no_args_is_help=True,
 )
 
-from oto.commands import google, notion, browser, sirene, search, enrichment, pennylane, anthropic, company, skills, whatsapp, folk, audio
-
-app.add_typer(audio.app, name="audio")
-app.add_typer(google.app, name="google")
-app.add_typer(notion.app, name="notion")
-app.add_typer(browser.app, name="browser")
-app.add_typer(browser.linkedin_app, name="linkedin")
-app.add_typer(sirene.app, name="sirene")
-app.add_typer(search.app, name="search")
-app.add_typer(enrichment.app, name="enrichment")
-app.add_typer(pennylane.app, name="pennylane")
-app.add_typer(anthropic.app, name="anthropic")
-app.add_typer(company.app, name="company")
-app.add_typer(skills.app, name="skills")
-app.add_typer(whatsapp.app, name="whatsapp")
-app.add_typer(folk.app, name="folk")
+# Auto-discover commands from oto/commands/*.py
+_commands_dir = Path(__file__).parent / "commands"
+for _cmd_file in sorted(_commands_dir.glob("*.py")):
+    if _cmd_file.name.startswith("_"):
+        continue
+    _module_name = _cmd_file.stem
+    try:
+        _module = importlib.import_module(f"oto.commands.{_module_name}")
+    except ImportError:
+        continue
+    if hasattr(_module, "app"):
+        app.add_typer(_module.app, name=_module_name)
 
 
 @app.command("config")
 def show_config():
     """Show current configuration and detected secrets."""
-    from pathlib import Path
     from oto.config import _find_project_secrets, _get_user_secrets, get_secret
 
     project_secrets = _find_project_secrets()
@@ -66,7 +65,6 @@ def main():
         app()
     except ValueError as e:
         if "not found. Set it via:" in str(e):
-            import sys
             print(f"Error: {e}", file=sys.stderr)
             raise SystemExit(1)
         raise

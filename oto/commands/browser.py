@@ -7,6 +7,7 @@ app = typer.Typer(help="Browser automation tools (LinkedIn, Crunchbase, Indeed, 
 
 # LinkedIn subcommands
 linkedin_app = typer.Typer(help="LinkedIn scraping (profile, company, employees, search)")
+app.add_typer(linkedin_app, name="linkedin")
 
 
 def _linkedin_client(**kwargs):
