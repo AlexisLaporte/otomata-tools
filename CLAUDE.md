@@ -34,8 +34,10 @@ oto/
 │   │   ├── enrichment.py       # kaspr, hunter, lemlist
 │   │   ├── pennylane.py        # accounting
 │   │   ├── anthropic.py        # usage, cost, summary
+│   │   ├── folk.py             # Folk CRM
 │   │   ├── company.py          # SIREN lookup multi-source
 │   │   ├── whatsapp.py         # WhatsApp messaging
+│   │   ├── audio.py            # audio recording, transcription
 │   │   └── skills.py           # Claude Code skills (enable/disable)
 │   └── tools/                  # API clients
 │       ├── google/             # gmail, drive, docs, sheets, slides, calendar, keep
@@ -115,3 +117,22 @@ oto skills enable --all            # enable all
 oto skills enable oto-google       # enable one
 oto skills disable oto-pennylane   # disable one
 ```
+
+## Release
+
+Package: `oto-cli` on PyPI. PyPI token in `pass otomata/PYPI_TOKEN`.
+
+```bash
+# Bump version in oto/__init__.py, then:
+hatch build && hatch publish -u __token__ -a "$(pass otomata/PYPI_TOKEN)"
+gh release create vX.Y.Z --generate-notes dist/*
+```
+
+## Docs
+
+Detailed docs in `docs/`:
+- `concepts.md` — architecture, connector types (API/browser/SDK), secrets, output contract, skills
+- `create-connector.md` — step-by-step guide to add a connector (command + client + skill)
+- `installation.md` — setup and dependencies
+- `gmail-oauth-setup.md` — OAuth multi-account setup for Gmail
+- `google-service-account-setup.md` — Google service account setup
