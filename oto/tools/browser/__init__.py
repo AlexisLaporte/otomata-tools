@@ -10,7 +10,7 @@ try:
 except ImportError:
     BrowserClient = None
 
-from .linkedin import LinkedInClient
+from .linkedin import LinkedInClient  # noqa: linkedin/ subpackage
 from .crunchbase import CrunchbaseClient
 from .pappers import PappersClient
 from .g2 import G2Client
