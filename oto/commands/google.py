@@ -7,6 +7,18 @@ from typing import Optional
 
 app = typer.Typer(help="Google Workspace tools (Drive, Docs, Sheets, Slides, Gmail, Calendar)")
 
+drive_app = typer.Typer(help="Google Drive tools (list, download, upload, mkdir, move, delete)")
+docs_app = typer.Typer(help="Google Docs tools (create, write, headings, section)")
+calendar_app = typer.Typer(help="Google Calendar tools (list, today, upcoming, search, get)")
+gmail_app = typer.Typer(help="Gmail tools (search, list, get, send, draft, reply, archive, attachments)")
+sheets_app = typer.Typer(help="Google Sheets tools (create, info, read, write, append)")
+
+app.add_typer(drive_app, name="drive")
+app.add_typer(docs_app, name="docs")
+app.add_typer(calendar_app, name="calendar")
+app.add_typer(gmail_app, name="gmail")
+app.add_typer(sheets_app, name="sheets")
+
 def _apply_signature(client, body: str, html: Optional[str]) -> Optional[str]:
     """Convert plain text body to HTML with Gmail signature appended."""
     import html as html_mod
@@ -16,7 +28,7 @@ def _apply_signature(client, body: str, html: Optional[str]) -> Optional[str]:
     body_html = html or '<div dir="ltr">' + html_mod.escape(body).replace('\n', '<br>') + '</div>'
     return body_html + '<br>--<br>' + signature
 
-@app.command("drive-list")
+@drive_app.command("list")
 def drive_list(
     folder_id: Optional[str] = typer.Option(None, help="Filter by parent folder ID"),
     query: Optional[str] = typer.Option(None, help="Custom query filter"),
@@ -30,7 +42,7 @@ def drive_list(
     files = client.list_files(folder_id=folder_id, query=query, page_size=limit)
     print(json.dumps({"count": len(files), "files": files}, indent=2))
 
-@app.command("drive-download")
+@drive_app.command("download")
 def drive_download(
     file_id: str = typer.Argument(..., help="Google Drive file ID"),
     output: str = typer.Argument(..., help="Output path"),
@@ -43,7 +55,7 @@ def drive_download(
     result = client.download_file(file_id, output)
     print(f"Downloaded: {result['filename']} -> {result['output_path']}")
 
-@app.command("drive-upload")
+@drive_app.command("upload")
 def drive_upload(
     file_path: str = typer.Argument(..., help="Local file path to upload"),
     folder_id: Optional[str] = typer.Option(None, help="Target folder ID in Drive"),
@@ -57,7 +69,7 @@ def drive_upload(
     result = client.upload_file(local_path=file_path, folder_id=folder_id, file_name=name)
     print(json.dumps(result, indent=2))
 
-@app.command("drive-mkdir")
+@drive_app.command("mkdir")
 def drive_mkdir(
     name: str = typer.Argument(..., help="Folder name"),
     parent: Optional[str] = typer.Option(None, "--parent", "-p", help="Parent folder ID"),
@@ -70,7 +82,7 @@ def drive_mkdir(
     result = client.create_folder(name, parent_folder_id=parent)
     print(json.dumps(result, indent=2))
 
-@app.command("drive-move")
+@drive_app.command("move")
 def drive_move(
     file_id: str = typer.Argument(..., help="Google Drive file ID to move"),
     folder_id: str = typer.Argument(..., help="Destination folder ID"),
@@ -83,7 +95,7 @@ def drive_move(
     result = client.move_file(file_id, folder_id)
     print(json.dumps(result, indent=2))
 
-@app.command("drive-delete")
+@drive_app.command("delete")
 def drive_delete(
     file_id: str = typer.Argument(..., help="Google Drive file ID to delete"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
@@ -95,7 +107,7 @@ def drive_delete(
     result = client.delete_file(file_id)
     print(json.dumps(result, indent=2))
 
-@app.command("docs-create")
+@docs_app.command("create")
 def docs_create(
     title: str = typer.Argument(..., help="Document title"),
     file: Optional[str] = typer.Option(None, "--file", "-f", help="Text/markdown file to import as content"),
@@ -118,7 +130,7 @@ def docs_create(
         result['imported'] = file
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-@app.command("docs-write")
+@docs_app.command("write")
 def docs_write(
     doc_id: str = typer.Argument(..., help="Google Docs document ID"),
     file: str = typer.Argument(..., help="Text/markdown file to write"),
@@ -138,7 +150,7 @@ def docs_write(
     result = client.replace_content(doc_id, content, markdown=markdown)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-@app.command("docs-headings")
+@docs_app.command("headings")
 def docs_headings(
     doc_id: str = typer.Argument(..., help="Google Docs document ID"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
@@ -150,7 +162,7 @@ def docs_headings(
     headings = client.list_headings(doc_id)
     print(json.dumps(headings, indent=2))
 
-@app.command("docs-section")
+@docs_app.command("section")
 def docs_section(
     doc_id: str = typer.Argument(..., help="Google Docs document ID"),
     heading: str = typer.Argument(..., help="Heading text to find"),
@@ -193,7 +205,7 @@ def auth(
     setup_account(name, ALL_SCOPES)
     print(f"Account '{name}' configured.")
 
-@app.command("calendar-list")
+@calendar_app.command("list")
 def calendar_list(
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
@@ -204,7 +216,7 @@ def calendar_list(
     calendars = client.list_calendars()
     print(json.dumps({"count": len(calendars), "calendars": calendars}, indent=2, ensure_ascii=False))
 
-@app.command("calendar-today")
+@calendar_app.command("today")
 def calendar_today(
     calendar_id: str = typer.Option("primary", "--calendar", "-c", help="Calendar ID"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
@@ -216,7 +228,7 @@ def calendar_today(
     events = client.today(calendar_id=calendar_id)
     print(json.dumps({"count": len(events), "events": events}, indent=2, ensure_ascii=False))
 
-@app.command("calendar-upcoming")
+@calendar_app.command("upcoming")
 def calendar_upcoming(
     days: int = typer.Option(7, "--days", "-d", help="Number of days ahead"),
     calendar_id: str = typer.Option("primary", "--calendar", "-c", help="Calendar ID"),
@@ -230,7 +242,7 @@ def calendar_upcoming(
     events = client.upcoming(days=days, calendar_id=calendar_id, max_results=limit)
     print(json.dumps({"count": len(events), "events": events}, indent=2, ensure_ascii=False))
 
-@app.command("calendar-search")
+@calendar_app.command("search")
 def calendar_search(
     query: str = typer.Argument(..., help="Search query"),
     days: int = typer.Option(30, "--days", "-d", help="Search window in days (future). Use --past for past events."),
@@ -256,7 +268,7 @@ def calendar_search(
     )
     print(json.dumps({"count": len(events), "events": events}, indent=2, ensure_ascii=False))
 
-@app.command("calendar-get")
+@calendar_app.command("get")
 def calendar_get(
     event_id: str = typer.Argument(..., help="Event ID"),
     calendar_id: str = typer.Option("primary", "--calendar", "-c", help="Calendar ID"),
@@ -269,7 +281,7 @@ def calendar_get(
     event = client.get_event(event_id, calendar_id=calendar_id)
     print(json.dumps(event, indent=2, ensure_ascii=False))
 
-@app.command("gmail-list")
+@gmail_app.command("list")
 def gmail_list(
     query: Optional[str] = typer.Option(None, help="Gmail search query"),
     label: Optional[str] = typer.Option(None, help="Filter by label ID"),
@@ -284,7 +296,7 @@ def gmail_list(
     messages = client.list_messages(query=query, label_ids=label_ids, max_results=limit)
     print(json.dumps({"count": len(messages), "messages": messages}, indent=2, ensure_ascii=False))
 
-@app.command("gmail-search")
+@gmail_app.command("search")
 def gmail_search(
     query: str = typer.Argument(..., help="Gmail search query (e.g. 'is:unread', 'from:user@example.com')"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max messages"),
@@ -297,7 +309,7 @@ def gmail_search(
     messages = client.search(query=query, max_results=limit)
     print(json.dumps({"count": len(messages), "messages": messages}, indent=2, ensure_ascii=False))
 
-@app.command("gmail-get")
+@gmail_app.command("get")
 def gmail_get(
     message_id: str = typer.Argument(..., help="Gmail message ID"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
@@ -309,7 +321,7 @@ def gmail_get(
     message = client.get_message(message_id)
     print(json.dumps(message, indent=2, ensure_ascii=False))
 
-@app.command("gmail-attachments")
+@gmail_app.command("attachments")
 def gmail_attachments(
     message_id: str = typer.Argument(..., help="Gmail message ID"),
     output: str = typer.Option(".", "--output", "-o", help="Output directory"),
@@ -322,7 +334,7 @@ def gmail_attachments(
     files = client.download_attachments(message_id, output)
     print(json.dumps({"count": len(files), "files": files}, indent=2, ensure_ascii=False))
 
-@app.command("gmail-draft")
+@gmail_app.command("draft")
 def gmail_draft(
     to: Optional[str] = typer.Option(None, help="Recipient email (auto-detected with --reply-to)"),
     subject: Optional[str] = typer.Option(None, help="Email subject (auto-detected with --reply-to)"),
@@ -348,7 +360,7 @@ def gmail_draft(
         result = client.create_draft(to=to, subject=subject, body=body, html=final_html, cc=cc, bcc=bcc, attachments=attach)
     print(json.dumps(result, indent=2))
 
-@app.command("gmail-reply")
+@gmail_app.command("reply")
 def gmail_reply(
     message_id: str = typer.Argument(..., help="Gmail message ID to reply to"),
     body: str = typer.Option(..., help="Reply body (plain text)"),
@@ -366,7 +378,7 @@ def gmail_reply(
     result = client.reply(message_id=message_id, body=body, html=final_html, cc=cc, attachments=attach)
     print(json.dumps(result, indent=2))
 
-@app.command("gmail-send")
+@gmail_app.command("send")
 def gmail_send(
     to: str = typer.Option(..., help="Recipient email"),
     subject: str = typer.Option(..., help="Email subject"),
@@ -386,7 +398,7 @@ def gmail_send(
     result = client.send(to=to, subject=subject, body=body, html=final_html, cc=cc, bcc=bcc, attachments=attach)
     print(json.dumps(result, indent=2))
 
-@app.command("gmail-archive")
+@gmail_app.command("archive")
 def gmail_archive(
     message_ids: Optional[list[str]] = typer.Argument(None, help="Gmail message IDs to archive"),
     query: Optional[str] = typer.Option(None, "--query", "-q", help="Archive all messages matching this Gmail query"),
@@ -406,7 +418,7 @@ def gmail_archive(
     results = client.archive_messages(ids)
     print(json.dumps({"archived": len(results), "results": results}, indent=2))
 
-@app.command("sheets-create")
+@sheets_app.command("create")
 def sheets_create(
     title: str = typer.Argument(..., help="Spreadsheet title"),
     csv_path: Optional[str] = typer.Option(None, "--csv", "-c", help="CSV file to import"),
@@ -422,7 +434,7 @@ def sheets_create(
         result['imported'] = csv_path
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-@app.command("sheets-info")
+@sheets_app.command("info")
 def sheets_info(
     spreadsheet_id: str = typer.Argument(..., help="Google Sheets spreadsheet ID"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
@@ -434,7 +446,7 @@ def sheets_info(
     meta = client.get_metadata(spreadsheet_id)
     print(json.dumps(meta, indent=2, ensure_ascii=False))
 
-@app.command("sheets-read")
+@sheets_app.command("read")
 def sheets_read(
     spreadsheet_id: str = typer.Argument(..., help="Google Sheets spreadsheet ID"),
     range: str = typer.Argument("A:ZZ", help="Cell range (e.g. 'Sheet1!A1:D10', 'A:ZZ')"),
@@ -452,7 +464,7 @@ def sheets_read(
         rows = client.read(spreadsheet_id, range)
         print(json.dumps({"rows": len(rows), "data": rows}, indent=2, ensure_ascii=False))
 
-@app.command("sheets-write")
+@sheets_app.command("write")
 def sheets_write(
     spreadsheet_id: str = typer.Argument(..., help="Google Sheets spreadsheet ID"),
     csv_path: str = typer.Argument(..., help="Path to CSV file to write"),
@@ -466,7 +478,7 @@ def sheets_write(
     result = client.write_csv(spreadsheet_id, csv_path, sheet_name=sheet)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-@app.command("sheets-append")
+@sheets_app.command("append")
 def sheets_append(
     spreadsheet_id: str = typer.Argument(..., help="Google Sheets spreadsheet ID"),
     csv_path: str = typer.Argument(..., help="Path to CSV file with rows to append"),
