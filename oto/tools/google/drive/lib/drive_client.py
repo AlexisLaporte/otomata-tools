@@ -138,13 +138,13 @@ class DriveClient:
 
         try:
             # Build query
-            filters = []
+            filters = ['trashed = false']
             if folder_id:
                 filters.append(f"'{folder_id}' in parents")
             if query:
                 filters.append(query)
 
-            final_query = " and ".join(filters) if filters else None
+            final_query = " and ".join(filters)
 
             # Execute query
             results = []
