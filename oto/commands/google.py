@@ -281,6 +281,22 @@ def calendar_get(
     event = client.get_event(event_id, calendar_id=calendar_id)
     print(json.dumps(event, indent=2, ensure_ascii=False))
 
+@calendar_app.command("create")
+def calendar_create(
+    summary: str = typer.Argument(..., help="Event title"),
+    date: str = typer.Option(..., "--date", "-d", help="Date or datetime (YYYY-MM-DD or ISO 8601)"),
+    end: Optional[str] = typer.Option(None, "--end", "-e", help="End date/datetime (defaults to same day or +1h)"),
+    description: Optional[str] = typer.Option(None, "--desc", help="Event description"),
+    location: Optional[str] = typer.Option(None, "--location", "-l", help="Event location"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Create a calendar event."""
+    from oto.tools.google.calendar.lib.calendar_client import CalendarClient
+
+    client = CalendarClient(account=account)
+    event = client.create_event(summary=summary, start=date, end=end, description=description, location=location)
+    print(json.dumps(event, indent=2, ensure_ascii=False))
+
 @gmail_app.command("list")
 def gmail_list(
     query: Optional[str] = typer.Option(None, help="Gmail search query"),

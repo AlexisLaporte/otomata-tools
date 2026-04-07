@@ -109,6 +109,46 @@ class CalendarClient:
             max_results=max_results,
         )
 
+    def create_event(
+        self,
+        summary: str,
+        start: str,
+        end: Optional[str] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        all_day: bool = False,
+        calendar_id: str = 'primary',
+    ) -> dict:
+        """Create a calendar event.
+
+        Args:
+            summary: Event title.
+            start: Start time (ISO 8601 datetime or YYYY-MM-DD for all-day).
+            end: End time. If None, defaults to start + 1 hour (or +1 day for all-day).
+            description: Event description.
+            location: Event location.
+            all_day: If True, treat start/end as dates (YYYY-MM-DD).
+            calendar_id: Calendar ID.
+        """
+        if all_day or len(start) == 10:  # YYYY-MM-DD
+            body: dict = {
+                'summary': summary,
+                'start': {'date': start},
+                'end': {'date': end or start},
+            }
+        else:
+            body = {
+                'summary': summary,
+                'start': {'dateTime': start},
+                'end': {'dateTime': end or (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()},
+            }
+        if description:
+            body['description'] = description
+        if location:
+            body['location'] = location
+        event = self.service.events().insert(calendarId=calendar_id, body=body).execute()
+        return self._format_event(event)
+
     @staticmethod
     def _format_event(event: dict, detailed: bool = False) -> dict:
         """Format an event into a clean dict."""
