@@ -175,6 +175,33 @@ def create_customer(
     _out(result)
 
 
+@app.command("update-customer")
+def update_customer(
+    customer_id: int = typer.Argument(..., help="Customer ID"),
+    name: Optional[str] = typer.Option(None, "--name", help="Customer name"),
+    vat_number: Optional[str] = typer.Option(None, "--vat", help="VAT number"),
+    email: Optional[str] = typer.Option(None, "--email", "-e", help="Email"),
+    address: Optional[str] = typer.Option(None, "--address", help="Street address"),
+    postal_code: Optional[str] = typer.Option(None, "--postal-code", help="Postal code"),
+    city: Optional[str] = typer.Option(None, "--city", help="City"),
+):
+    """Update a customer."""
+    fields = {}
+    if name:
+        fields["name"] = name
+    if vat_number:
+        fields["vat_number"] = vat_number
+    if email:
+        fields["emails"] = [email]
+    if address or postal_code or city:
+        fields["billing_address"] = {
+            k: v for k, v in {
+                "address": address, "postal_code": postal_code, "city": city,
+            }.items() if v
+        }
+    _out(_client().update_customer(customer_id, **fields))
+
+
 # --- Products ---
 
 
@@ -232,6 +259,24 @@ def create_invoice(
         lines=lines, draft=not finalize, external_reference=ref,
     )
     _out(result)
+
+
+@app.command("update-invoice")
+def update_invoice(
+    invoice_id: int = typer.Argument(..., help="Invoice ID"),
+    customer_id: Optional[int] = typer.Option(None, "--customer", "-c", help="New customer ID"),
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Invoice date"),
+    deadline: Optional[str] = typer.Option(None, "--deadline", help="Payment deadline"),
+):
+    """Update a draft invoice."""
+    fields = {}
+    if customer_id:
+        fields["customer_id"] = customer_id
+    if date:
+        fields["date"] = date
+    if deadline:
+        fields["deadline"] = deadline
+    _out(_client().update_invoice(invoice_id, **fields))
 
 
 @app.command("finalize-invoice")

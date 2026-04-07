@@ -295,6 +295,10 @@ class PennylaneClient:
             body["external_reference"] = external_reference
         return self.post("company_customers", body)
 
+    def update_customer(self, customer_id: int, **fields) -> dict:
+        """Update a customer. Accepts any top-level field (name, vat_number, emails, billing_address, etc.)."""
+        return self.put(f"company_customers/{customer_id}", fields)
+
     # --- Products ---
 
     def list_products(self, max_pages: Optional[int] = None) -> list:
@@ -337,6 +341,10 @@ class PennylaneClient:
         if external_reference:
             body["external_reference"] = external_reference
         return self.post("customer_invoices", body)
+
+    def update_invoice(self, invoice_id: int, **fields) -> dict:
+        """Update a draft invoice. Accepts any field (customer_id, date, deadline, etc.)."""
+        return self.put(f"customer_invoices/{invoice_id}", fields)
 
     def finalize_invoice(self, invoice_id: int) -> dict:
         """Finalize a draft invoice."""
