@@ -227,6 +227,33 @@ class GmailClient:
         ).execute()
         return {'id': draft['id'], 'message_id': draft['message']['id']}
 
+    def list_drafts(self, max_results: int = 20) -> list[dict]:
+        """List drafts with metadata (id, message_id, to, subject, snippet)."""
+        resp = self.service.users().drafts().list(userId='me', maxResults=max_results).execute()
+        drafts = resp.get('drafts', [])
+        out = []
+        for d in drafts:
+            msg_id = d['message']['id']
+            msg = self.service.users().messages().get(
+                userId='me', id=msg_id, format='metadata',
+                metadataHeaders=['To', 'Subject', 'Date'],
+            ).execute()
+            headers = {h['name'].lower(): h['value'] for h in msg.get('payload', {}).get('headers', [])}
+            out.append({
+                'id': d['id'],
+                'message_id': msg_id,
+                'to': headers.get('to', ''),
+                'subject': headers.get('subject', ''),
+                'date': headers.get('date', ''),
+                'snippet': msg.get('snippet', ''),
+            })
+        return out
+
+    def delete_draft(self, draft_id: str) -> dict:
+        """Delete a draft by its draft ID."""
+        self.service.users().drafts().delete(userId='me', id=draft_id).execute()
+        return {'deleted': draft_id}
+
     def create_draft_reply(
         self,
         message_id: str,

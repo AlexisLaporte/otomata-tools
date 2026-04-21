@@ -10,7 +10,7 @@ app = typer.Typer(help="Google Workspace tools (Drive, Docs, Sheets, Slides, Gma
 drive_app = typer.Typer(help="Google Drive tools (list, download, upload, mkdir, move, rename, delete)")
 docs_app = typer.Typer(help="Google Docs tools (create, write, headings, section)")
 calendar_app = typer.Typer(help="Google Calendar tools (list, today, upcoming, search, get)")
-gmail_app = typer.Typer(help="Gmail tools (search, list, get, send, draft, reply, archive, attachments)")
+gmail_app = typer.Typer(help="Gmail tools (search, list, get, send, draft, draft-list, draft-delete, reply, archive, attachments)")
 sheets_app = typer.Typer(help="Google Sheets tools (create, info, read, write, append)")
 
 app.add_typer(drive_app, name="drive")
@@ -388,6 +388,37 @@ def gmail_draft(
             raise typer.BadParameter("--to and --subject are required (unless using --reply-to)")
         result = client.create_draft(to=to, subject=subject, body=body, html=final_html, cc=cc, bcc=bcc, attachments=attach)
     print(json.dumps(result, indent=2))
+
+@gmail_app.command("draft-list")
+def gmail_draft_list(
+    max_results: int = typer.Option(20, "--max-results", "-n", help="Maximum number of drafts to list"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """List Gmail drafts (id, subject, to, date)."""
+    from oto.tools.google.gmail.lib.gmail_client import GmailClient
+
+    client = GmailClient(account=account)
+    drafts = client.list_drafts(max_results=max_results)
+    print(json.dumps({"count": len(drafts), "drafts": drafts}, indent=2, ensure_ascii=False))
+
+
+@gmail_app.command("draft-delete")
+def gmail_draft_delete(
+    draft_ids: list[str] = typer.Argument(..., help="One or more draft IDs to delete"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
+):
+    """Delete one or more Gmail drafts by ID."""
+    from oto.tools.google.gmail.lib.gmail_client import GmailClient
+
+    client = GmailClient(account=account)
+    results = []
+    for did in draft_ids:
+        try:
+            results.append(client.delete_draft(did))
+        except Exception as e:
+            results.append({"id": did, "error": str(e)})
+    print(json.dumps({"count": len(results), "results": results}, indent=2))
+
 
 @gmail_app.command("reply")
 def gmail_reply(
