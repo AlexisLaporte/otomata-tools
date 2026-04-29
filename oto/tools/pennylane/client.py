@@ -346,9 +346,27 @@ class PennylaneClient:
         """Update a draft invoice. Accepts any field (customer_id, date, deadline, etc.)."""
         return self.put(f"customer_invoices/{invoice_id}", fields)
 
+    def update_invoice_line(self, invoice_id: int, line_id: int, **fields) -> dict:
+        """Update a line on a draft invoice (quantity, raw_currency_unit_price, label, ...).
+
+        Pennylane expects Rails-style nested attributes, so a dedicated wrapper
+        avoids clients having to know the shape.
+        """
+        body = {"invoice_lines": {"update": [{"id": line_id, **fields}]}}
+        return self.put(f"customer_invoices/{invoice_id}", body)
+
     def finalize_invoice(self, invoice_id: int) -> dict:
         """Finalize a draft invoice."""
         return self.put(f"customer_invoices/{invoice_id}/finalize", {})
+
+    def send_invoice(self, invoice_id: int) -> dict:
+        """Send a finalized invoice to the customer by email (uses customer's email on file)."""
+        return self.post(f"customer_invoices/{invoice_id}/send_by_email", {})
+
+    def get_invoice_lines(self, invoice_id: int) -> list:
+        """Get the lines of a customer invoice."""
+        data = self.fetch(f"customer_invoices/{invoice_id}/invoice_lines")
+        return data.get("items", []) if isinstance(data, dict) else []
 
     # --- Quotes ---
 

@@ -268,7 +268,7 @@ def update_invoice(
     date: Optional[str] = typer.Option(None, "--date", "-d", help="Invoice date"),
     deadline: Optional[str] = typer.Option(None, "--deadline", help="Payment deadline"),
 ):
-    """Update a draft invoice."""
+    """Update a draft invoice header (customer/date/deadline). Use update-invoice-line for line edits."""
     fields = {}
     if customer_id:
         fields["customer_id"] = customer_id
@@ -279,12 +279,49 @@ def update_invoice(
     _out(_client().update_invoice(invoice_id, **fields))
 
 
+@app.command("invoice-lines")
+def invoice_lines(
+    invoice_id: int = typer.Argument(..., help="Invoice ID"),
+):
+    """List lines of a customer invoice (with their IDs)."""
+    _out(_client().get_invoice_lines(invoice_id))
+
+
+@app.command("update-invoice-line")
+def update_invoice_line(
+    invoice_id: int = typer.Argument(..., help="Invoice ID"),
+    line_id: int = typer.Argument(..., help="Line ID (use invoice-lines to list)"),
+    quantity: Optional[float] = typer.Option(None, "--qty", "-q", help="New quantity"),
+    unit_price: Optional[str] = typer.Option(None, "--price", "-p", help="New unit price HT (e.g. '700.00')"),
+    label: Optional[str] = typer.Option(None, "--label", help="New label"),
+):
+    """Update a line on a draft invoice (qty, unit price, label)."""
+    fields = {}
+    if quantity is not None:
+        fields["quantity"] = str(quantity)
+    if unit_price is not None:
+        fields["raw_currency_unit_price"] = unit_price
+    if label is not None:
+        fields["label"] = label
+    if not fields:
+        raise typer.BadParameter("Provide at least one of --qty, --price, --label")
+    _out(_client().update_invoice_line(invoice_id, line_id, **fields))
+
+
 @app.command("finalize-invoice")
 def finalize_invoice(
     invoice_id: int = typer.Argument(..., help="Invoice ID to finalize"),
 ):
     """Finalize a draft invoice."""
     _out(_client().finalize_invoice(invoice_id))
+
+
+@app.command("send-invoice")
+def send_invoice(
+    invoice_id: int = typer.Argument(..., help="Invoice ID to send by email"),
+):
+    """Send a finalized invoice to the customer by email."""
+    _out(_client().send_invoice(invoice_id))
 
 
 # --- Quotes ---
