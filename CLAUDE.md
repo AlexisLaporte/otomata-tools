@@ -160,4 +160,6 @@ Detailed docs in `docs/`:
 - `create-connector.md` — step-by-step guide to add a connector (command + client + skill)
 - `installation.md` — setup and dependencies
 - `gmail-oauth-setup.md` — OAuth multi-account setup for Gmail
+- `gmail.md` — body format flags (markdown / html / plain) for send/reply/draft
+- `google-docs.md` — markdown import via Drive HTML importer + .otomata CSS convention
 - `google-service-account-setup.md` — Google service account setup
