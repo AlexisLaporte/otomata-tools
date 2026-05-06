@@ -28,6 +28,39 @@ def _apply_signature(client, body: str, html: Optional[str]) -> Optional[str]:
     body_html = html or '<div dir="ltr">' + html_mod.escape(body).replace('\n', '<br>') + '</div>'
     return body_html + '<br>--<br>' + signature
 
+
+def _markdown_to_html_fragment(text: str) -> str:
+    """Render markdown body to an HTML fragment suitable for Gmail.
+
+    Reuses the list-normalization helper from the docs renderer so authors
+    can write GFM-style content (lists right after paragraphs, tables, fenced
+    code, inline attributes). No <html>/<body> wrapping — Gmail accepts the
+    fragment directly inside the multipart text/html part.
+    """
+    import markdown as _md
+    from oto.tools.google.docs.lib.markdown_to_html import _normalize_lists
+    return _md.markdown(
+        _normalize_lists(text),
+        extensions=['tables', 'fenced_code', 'sane_lists', 'attr_list'],
+        output_format='html',
+    )
+
+
+def _resolve_body_format(body: str, markdown: bool, html: bool) -> tuple[str, Optional[str]]:
+    """Resolve the (plain_text, html) tuple to send based on format flags.
+
+    --html              : body is raw HTML, sent as-is in text/html. Takes
+                          precedence over --markdown when both are set.
+    --markdown (default): body is markdown, rendered to HTML for the multipart
+                          text/html part. Markdown source remains plain text.
+    --no-markdown alone : plain text only, no HTML part.
+    """
+    if html:
+        return body, body
+    if markdown:
+        return body, _markdown_to_html_fragment(body)
+    return body, None
+
 @drive_app.command("list")
 def drive_list(
     folder_id: Optional[str] = typer.Option(None, help="Filter by parent folder ID"),
@@ -124,10 +157,15 @@ def drive_delete(
 def docs_create(
     title: str = typer.Argument(..., help="Document title"),
     file: Optional[str] = typer.Option(None, "--file", "-f", help="Text/markdown file to import as content"),
-    markdown: bool = typer.Option(False, "--markdown", "-m", help="Parse markdown formatting (headings, bold, lists, quotes)"),
+    markdown: bool = typer.Option(False, "--markdown", "-m", help="Render markdown via HTML → Drive (tables, lists, code, links). Style resolved from .otomata/google-docs-style.css (project) or ~/.otomata/ (user)."),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
-    """Create a new Google Doc, optionally importing content from a file."""
+    """Create a new Google Doc, optionally importing content from a file.
+
+    With --markdown, content is rendered to HTML and uploaded via Drive's
+    native HTML importer. CSS is auto-resolved from .otomata/google-docs-style.css
+    (project > user). See docs/google-docs.md for details.
+    """
     from oto.tools.google.docs.lib.docs_client import DocsClient
 
     content = ''
@@ -138,7 +176,7 @@ def docs_create(
             markdown = True
 
     client = DocsClient(account=account)
-    result = client.create(title, content, markdown=markdown)
+    result = client.create(title, content, markdown=markdown, account=account)
     if file:
         result['imported'] = file
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -147,10 +185,15 @@ def docs_create(
 def docs_write(
     doc_id: str = typer.Argument(..., help="Google Docs document ID"),
     file: str = typer.Argument(..., help="Text/markdown file to write"),
-    markdown: bool = typer.Option(False, "--markdown", "-m", help="Parse markdown formatting"),
+    markdown: bool = typer.Option(False, "--markdown", "-m", help="Render markdown via HTML → Drive (tables, lists, code, links). Same fidelity as docs create -m."),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
-    """Replace entire content of a Google Doc with a file's content."""
+    """Replace entire content of a Google Doc with a file's content.
+
+    With --markdown, the file is rendered to HTML and the doc is overwritten
+    via Drive's HTML importer — proper tables, nested lists, fenced code,
+    blockquotes. Same path as `docs create -m`.
+    """
     from oto.tools.google.docs.lib.docs_client import DocsClient
 
     with open(file, 'r', encoding='utf-8') as fh:
@@ -160,7 +203,7 @@ def docs_write(
         markdown = True
 
     client = DocsClient(account=account)
-    result = client.replace_content(doc_id, content, markdown=markdown)
+    result = client.replace_content(doc_id, content, markdown=markdown, account=account)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 @docs_app.command("headings")
@@ -367,8 +410,9 @@ def gmail_attachments(
 def gmail_draft(
     to: Optional[str] = typer.Option(None, help="Recipient email (auto-detected with --reply-to)"),
     subject: Optional[str] = typer.Option(None, help="Email subject (auto-detected with --reply-to)"),
-    body: str = typer.Option(..., help="Email body (plain text)"),
-    html: Optional[str] = typer.Option(None, help="Email body (HTML). If provided, sent as multipart alternative with plain text."),
+    body: str = typer.Option(..., help="Email body. Format depends on --markdown / --html / neither (plain)."),
+    markdown: bool = typer.Option(True, "--markdown/--no-markdown", "-m", help="Body is markdown — rendered to HTML. Mutually exclusive with --html. Default: on."),
+    html: bool = typer.Option(False, "--html", help="Body is raw HTML — sent as-is. Mutually exclusive with --markdown."),
     cc: Optional[str] = typer.Option(None, help="CC recipients"),
     bcc: Optional[str] = typer.Option(None, help="BCC recipients"),
     reply_to: Optional[str] = typer.Option(None, "--reply-to", "-r", help="Message ID to reply to (threads the draft)"),
@@ -376,17 +420,18 @@ def gmail_draft(
     sign: bool = typer.Option(True, "--sign/--no-sign", help="Append Gmail signature"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
-    """Create a draft email in Gmail. Use --reply-to for threaded replies."""
+    """Create a draft email in Gmail. Use --reply-to for threaded replies. Body defaults to markdown; pass --html for raw HTML or --no-markdown for plain text."""
     from oto.tools.google.gmail.lib.gmail_client import GmailClient
 
+    plain, body_html = _resolve_body_format(body, markdown, html)
     client = GmailClient(account=account)
-    final_html = _apply_signature(client, body, html) if sign else html
+    final_html = _apply_signature(client, plain, body_html) if sign else body_html
     if reply_to:
-        result = client.create_draft_reply(message_id=reply_to, body=body, html=final_html, cc=cc, attachments=attach)
+        result = client.create_draft_reply(message_id=reply_to, body=plain, html=final_html, cc=cc, attachments=attach)
     else:
         if not to or not subject:
             raise typer.BadParameter("--to and --subject are required (unless using --reply-to)")
-        result = client.create_draft(to=to, subject=subject, body=body, html=final_html, cc=cc, bcc=bcc, attachments=attach)
+        result = client.create_draft(to=to, subject=subject, body=plain, html=final_html, cc=cc, bcc=bcc, attachments=attach)
     print(json.dumps(result, indent=2))
 
 @gmail_app.command("draft-list")
@@ -423,39 +468,43 @@ def gmail_draft_delete(
 @gmail_app.command("reply")
 def gmail_reply(
     message_id: str = typer.Argument(..., help="Gmail message ID to reply to"),
-    body: str = typer.Option(..., help="Reply body (plain text)"),
-    html: Optional[str] = typer.Option(None, help="Reply body (HTML)"),
+    body: str = typer.Option(..., help="Reply body. Format depends on --markdown / --html / neither (plain)."),
+    markdown: bool = typer.Option(True, "--markdown/--no-markdown", "-m", help="Body is markdown — rendered to HTML. Default: on."),
+    html: bool = typer.Option(False, "--html", help="Body is raw HTML — sent as-is. Takes precedence over --markdown."),
     cc: Optional[str] = typer.Option(None, help="CC recipients"),
     attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
     sign: bool = typer.Option(True, "--sign/--no-sign", help="Append Gmail signature"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
-    """Reply to a Gmail message (preserves thread)."""
+    """Reply to a Gmail message (preserves thread). Body defaults to markdown; pass --html for raw HTML or --no-markdown for plain text."""
     from oto.tools.google.gmail.lib.gmail_client import GmailClient
 
+    plain, body_html = _resolve_body_format(body, markdown, html)
     client = GmailClient(account=account)
-    final_html = _apply_signature(client, body, html) if sign else html
-    result = client.reply(message_id=message_id, body=body, html=final_html, cc=cc, attachments=attach)
+    final_html = _apply_signature(client, plain, body_html) if sign else body_html
+    result = client.reply(message_id=message_id, body=plain, html=final_html, cc=cc, attachments=attach)
     print(json.dumps(result, indent=2))
 
 @gmail_app.command("send")
 def gmail_send(
     to: str = typer.Option(..., help="Recipient email"),
     subject: str = typer.Option(..., help="Email subject"),
-    body: str = typer.Option(..., help="Email body (plain text)"),
-    html: Optional[str] = typer.Option(None, help="Email body (HTML)"),
+    body: str = typer.Option(..., help="Email body. Format depends on --markdown / --html / neither (plain)."),
+    markdown: bool = typer.Option(True, "--markdown/--no-markdown", "-m", help="Body is markdown — rendered to HTML. Default: on."),
+    html: bool = typer.Option(False, "--html", help="Body is raw HTML — sent as-is. Takes precedence over --markdown."),
     cc: Optional[str] = typer.Option(None, help="CC recipients"),
     bcc: Optional[str] = typer.Option(None, help="BCC recipients"),
     attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
     sign: bool = typer.Option(True, "--sign/--no-sign", help="Append Gmail signature"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
-    """Send an email via Gmail."""
+    """Send an email via Gmail. Body defaults to markdown; pass --html for raw HTML or --no-markdown for plain text."""
     from oto.tools.google.gmail.lib.gmail_client import GmailClient
 
+    plain, body_html = _resolve_body_format(body, markdown, html)
     client = GmailClient(account=account)
-    final_html = _apply_signature(client, body, html) if sign else html
-    result = client.send(to=to, subject=subject, body=body, html=final_html, cc=cc, bcc=bcc, attachments=attach)
+    final_html = _apply_signature(client, plain, body_html) if sign else body_html
+    result = client.send(to=to, subject=subject, body=plain, html=final_html, cc=cc, bcc=bcc, attachments=attach)
     print(json.dumps(result, indent=2))
 
 @gmail_app.command("archive")
