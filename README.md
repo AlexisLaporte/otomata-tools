@@ -49,6 +49,7 @@ cd oto && pip install -e ".[all]"
 | `oto attio` | Attio CRM (contacts, companies, deals, tasks) | — |
 | `oto folk` | Folk CRM (contacts, companies, deals) | — |
 | `oto zoho` | Zoho CRM (records, contacts, deals, notes) | — |
+| `oto zohodesk` | Zoho Desk (tickets, threads, contacts, departments) | — |
 | `oto company` | French company lookup (multi-source) | — |
 | `oto audio` | Audio recording, transcription, summaries | — |
 | `oto gemini` | Image generation (text-to-image, editing) | — |
