@@ -32,6 +32,7 @@ google = [
     "google-auth-oauthlib>=1.0.0",
     "google-api-python-client>=2.0.0",
     "gkeepapi>=0.16.0",
+    "markdown>=3.5",
 ]
 browser = [
     "o-browser",

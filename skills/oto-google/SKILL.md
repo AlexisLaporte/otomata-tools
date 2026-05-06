@@ -62,7 +62,15 @@ oto google docs headings DOC_ID -a myaccount
 
 # Lire une section par titre
 oto google docs section DOC_ID "Titre de la section" -a myaccount
+
+# Créer un Google Doc à partir d'un markdown
+oto google docs create "Titre" -f note.md -m -a myaccount
 ```
+
+Avec `-m`, le markdown est rendu en HTML puis importé via Drive (tables,
+listes, liens, code, blockquote gérés nativement). Style auto-résolu via la
+convention `.otomata/google-docs-style.css` : projet (CWD ou parents) >
+utilisateur (`~/.otomata/`) > rendu Drive natif si aucun fichier.
 
 ## Sheets
 
