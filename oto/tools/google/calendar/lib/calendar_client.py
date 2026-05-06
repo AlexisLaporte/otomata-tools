@@ -160,6 +160,7 @@ class CalendarClient:
             'start': start.get('dateTime', start.get('date', '')),
             'end': end.get('dateTime', end.get('date', '')),
             'status': event.get('status', ''),
+            'transparency': event.get('transparency', 'opaque'),
             'htmlLink': event.get('htmlLink', ''),
         }
         location = event.get('location')
