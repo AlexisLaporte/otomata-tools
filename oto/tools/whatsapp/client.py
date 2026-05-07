@@ -53,7 +53,19 @@ class WhatsAppClient:
             except (json.JSONDecodeError, TypeError):
                 raise RuntimeError(f"WhatsApp error (exit {result.returncode})")
 
-        return json.loads(result.stdout)
+        if not result.stdout.strip():
+            stderr_tail = result.stderr.strip()[-300:] or "(empty)"
+            raise RuntimeError(
+                f"WhatsApp bridge exited 0 but produced no stdout. "
+                f"Message status unknown. stderr: {stderr_tail}"
+            )
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"WhatsApp bridge returned non-JSON stdout (status unknown): "
+                f"{result.stdout.strip()[:300]}"
+            ) from e
 
     def auth(self) -> dict:
         return self._run("auth", interactive=True)
