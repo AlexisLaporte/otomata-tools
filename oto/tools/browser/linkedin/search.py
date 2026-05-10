@@ -148,10 +148,26 @@ class SearchMixin:
             await self.scroll_by((i + 1) * 400)
             await self.wait(1)
 
+        # Si LinkedIn affiche "Aucun résultat", retourner [] sans scraper la page :
+        # sinon le scraper rabat sur des liens parasites (sidebar, suggestions)
+        # type "Otomata" qui contaminent les batches d'enrichissement.
+        no_results = await self.page.evaluate(r"""() => {
+            const els = document.querySelectorAll('h2, h3, [class*="no-results"]');
+            for (const el of els) {
+                const t = (el.textContent || '').trim();
+                if (/aucun résultat|no results|0 result/i.test(t)) return true;
+            }
+            return false;
+        }""")
+        if no_results:
+            return []
+
         companies = []
         seen_slugs = set()
 
-        links = await self.query_selector_all('a[href*="/company/"]')
+        # Restreindre à <main> : exclut sidebar/header/nav qui peuvent contenir
+        # des suggestions parasites (companies que l'utilisateur suit, etc.)
+        links = await self.query_selector_all('main a[href*="/company/"]')
 
         for link in links:
             if len(companies) >= limit:
@@ -167,6 +183,10 @@ class SearchMixin:
 
             slug = match.group(1)
             if slug in seen_slugs or slug in ("login", "signup"):
+                continue
+            # Rejeter les slugs purement numériques : ce sont des company_id
+            # internes (pages sans nom canonique). Vraies companies = kebab-case.
+            if slug.isdigit():
                 continue
             seen_slugs.add(slug)
 
