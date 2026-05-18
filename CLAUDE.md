@@ -42,6 +42,7 @@ oto/
 │   │   ├── zohodesk.py         # Zoho Desk (tickets/support)
 │   │   ├── company.py          # SIREN lookup multi-source
 │   │   ├── whatsapp.py         # WhatsApp messaging
+│   │   ├── slack.py            # Slack — send/read/list-channels/dm (bot+user tokens)
 │   │   ├── audio.py            # audio recording, transcription
 │   │   ├── gemini.py           # Gemini image generation
 │   │   ├── pdf.py              # markdown → PDF via pandoc + weasyprint (bundled template)
