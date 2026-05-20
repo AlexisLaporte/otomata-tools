@@ -31,6 +31,8 @@ _EXTENSIONS = [
 
 _LIST_LINE = re.compile(r'^\s*([-*+]|\d+[.)])\s+')
 
+_YAML_FRONTMATTER = re.compile(r'\A---[ \t]*\n.*?\n---[ \t]*(?:\n[ \t]*)*', re.DOTALL)
+
 
 def find_docs_style() -> str:
     """Resolve CSS via the .otomata/ convention.
@@ -63,7 +65,7 @@ def markdown_to_html(text: str, title: str = '', css: str = None) -> str:
     Pass `css=None` to auto-resolve via the .otomata/ convention; pass a CSS
     string to override; pass `''` to skip the `<style>` block entirely.
     """
-    body = _md.markdown(_normalize_lists(text), extensions=_EXTENSIONS, output_format='html')
+    body = _md.markdown(_normalize_lists(_strip_frontmatter(text)), extensions=_EXTENSIONS, output_format='html')
     title_tag = f'<title>{_escape(title)}</title>' if title else ''
     if css is None:
         css = find_docs_style()
@@ -76,6 +78,15 @@ def markdown_to_html(text: str, title: str = '', css: str = None) -> str:
         f'{body}'
         '</body></html>'
     )
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Strip a leading YAML frontmatter block (--- ... ---) if present.
+
+    Pandoc/Hugo-style frontmatter is metadata, not content. Python-Markdown
+    renders it as a thematic break + paragraph if left in.
+    """
+    return _YAML_FRONTMATTER.sub('', text, count=1)
 
 
 def _normalize_lists(text: str) -> str:

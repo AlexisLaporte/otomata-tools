@@ -163,9 +163,13 @@ def create_customer(
     address: Optional[str] = typer.Option(None, "--address", help="Street address"),
     postal_code: Optional[str] = typer.Option(None, "--postal-code", help="Postal code"),
     city: Optional[str] = typer.Option(None, "--city", help="City"),
-    ref: Optional[str] = typer.Option(None, "--ref", help="External reference"),
+    ref: Optional[str] = typer.Option(None, "--ref", help="External reference (Attio Deal slug — join key Pennylane/Attio/FS, NOT the SIREN)"),
 ):
-    """Create a customer."""
+    """Create a customer.
+
+    SIREN/SIRET (reg_no) and VAT number are not set here — run `update-customer`
+    afterwards with --reg-no and --vat to fill those native fields.
+    """
     result = _client().create_customer(
         name=name,
         emails=[email] if email else None,
@@ -179,7 +183,9 @@ def create_customer(
 def update_customer(
     customer_id: int = typer.Argument(..., help="Customer ID"),
     name: Optional[str] = typer.Option(None, "--name", help="Customer name"),
-    vat_number: Optional[str] = typer.Option(None, "--vat", help="VAT number"),
+    reg_no: Optional[str] = typer.Option(None, "--reg-no", help="Registration number (SIREN for FR, KvK for NL, etc.)"),
+    vat_number: Optional[str] = typer.Option(None, "--vat", help="VAT number (e.g. FR06993454404, NL817576320B01)"),
+    ref: Optional[str] = typer.Option(None, "--ref", help="External reference (Attio Deal slug)"),
     email: Optional[str] = typer.Option(None, "--email", "-e", help="Email"),
     address: Optional[str] = typer.Option(None, "--address", help="Street address"),
     postal_code: Optional[str] = typer.Option(None, "--postal-code", help="Postal code"),
@@ -189,8 +195,12 @@ def update_customer(
     fields = {}
     if name:
         fields["name"] = name
+    if reg_no:
+        fields["reg_no"] = reg_no
     if vat_number:
         fields["vat_number"] = vat_number
+    if ref:
+        fields["external_reference"] = ref
     if email:
         fields["emails"] = [email]
     if address or postal_code or city:

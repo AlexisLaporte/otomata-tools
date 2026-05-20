@@ -16,6 +16,23 @@ from googleapiclient.discovery import build
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 
+def _markdown_to_html_fragment(text: str) -> str:
+    """Render markdown to an HTML fragment suitable for Gmail's text/html part.
+
+    No <html>/<body> wrapping — Gmail accepts the fragment directly inside a
+    multipart/alternative message. Reuses the list-normalization helper from
+    the docs renderer so authors can write GFM-style lists right after a
+    paragraph, plus tables, fenced code, inline attributes.
+    """
+    import markdown as _md
+    from oto.tools.google.docs.lib.markdown_to_html import _normalize_lists
+    return _md.markdown(
+        _normalize_lists(text),
+        extensions=['tables', 'fenced_code', 'sane_lists', 'attr_list'],
+        output_format='html',
+    )
+
+
 class GmailClientError(Exception):
     """Gmail API error."""
 
@@ -144,9 +161,18 @@ class GmailClient:
         cc: Optional[str] = None,
         bcc: Optional[str] = None,
         attachments: Optional[list[str]] = None,
+        from_name: Optional[str] = None,
+        markdown: bool = True,
     ) -> dict:
-        """Send an email. Returns the sent message metadata."""
-        message = self._build_message(to, subject, body, html, cc, bcc, attachments)
+        """Send an email. Returns the sent message metadata.
+
+        If `html` is not provided and `markdown=True` (default), the body is
+        rendered from markdown to an HTML fragment so Gmail wraps paragraphs
+        naturally instead of dumping hard line breaks in text/plain mode.
+        """
+        if html is None and markdown:
+            html = _markdown_to_html_fragment(body)
+        message = self._build_message(to, subject, body, html, cc, bcc, attachments, from_name=from_name)
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = self.service.users().messages().send(
             userId='me', body={'raw': raw},
@@ -160,8 +186,16 @@ class GmailClient:
         html: Optional[str] = None,
         cc: Optional[str] = None,
         attachments: Optional[list[str]] = None,
+        from_name: Optional[str] = None,
+        markdown: bool = True,
     ) -> dict:
-        """Reply to a message. Preserves thread, subject, and headers."""
+        """Reply to a message. Preserves thread, subject, and headers.
+
+        If `html` is not provided and `markdown=True` (default), the body is
+        rendered from markdown to an HTML fragment.
+        """
+        if html is None and markdown:
+            html = _markdown_to_html_fragment(body)
         original = self.service.users().messages().get(
             userId='me', id=message_id, format='full',
         ).execute()
@@ -189,7 +223,7 @@ class GmailClient:
         if not subject.lower().startswith('re:'):
             subject = f"Re: {subject}"
 
-        message = self._build_message(reply_to, subject, body, html, cc, None, attachments)
+        message = self._build_message(reply_to, subject, body, html, cc, None, attachments, from_name=from_name)
         orig_msg_id = headers.get('Message-ID', '')
         if orig_msg_id:
             message['In-Reply-To'] = orig_msg_id
@@ -296,7 +330,7 @@ class GmailClient:
             thread_id=thread_id, in_reply_to=orig_msg_id or None,
         )
 
-    def _build_message(self, to, subject, body, html=None, cc=None, bcc=None, attachments=None):
+    def _build_message(self, to, subject, body, html=None, cc=None, bcc=None, attachments=None, from_name=None):
         """Build a MIME message."""
         has_attachments = attachments and len(attachments) > 0
 
@@ -324,6 +358,9 @@ class GmailClient:
             message['cc'] = cc
         if bcc:
             message['bcc'] = bcc
+        if from_name:
+            profile = self.service.users().getProfile(userId='me').execute()
+            message['From'] = f'{from_name} <{profile["emailAddress"]}>'
         return message
 
     @staticmethod

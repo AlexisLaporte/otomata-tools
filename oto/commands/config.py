@@ -21,6 +21,7 @@ TRACKED_SECRETS = [
     "FOLK_API_KEY",
     "ATTIO_API_KEY",
     "TULS_API_TOKEN",
+    "OTO_API_KEY",
 ]
 
 

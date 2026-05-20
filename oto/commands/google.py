@@ -476,6 +476,7 @@ def gmail_reply(
     cc: Optional[str] = typer.Option(None, help="CC recipients"),
     attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
     sign: bool = typer.Option(True, "--sign/--no-sign", help="Append Gmail signature"),
+    from_name: Optional[str] = typer.Option(None, "--from-name", help="Display name override for the From header (email stays the authenticated address)"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
     """Reply to a Gmail message (preserves thread). Body defaults to markdown; pass --html for raw HTML or --no-markdown for plain text."""
@@ -484,7 +485,7 @@ def gmail_reply(
     plain, body_html = _resolve_body_format(body, markdown, html)
     client = GmailClient(account=account)
     final_html = _apply_signature(client, plain, body_html) if sign else body_html
-    result = client.reply(message_id=message_id, body=plain, html=final_html, cc=cc, attachments=attach)
+    result = client.reply(message_id=message_id, body=plain, html=final_html, cc=cc, attachments=attach, from_name=from_name)
     print(json.dumps(result, indent=2))
 
 @gmail_app.command("send")
@@ -498,6 +499,7 @@ def gmail_send(
     bcc: Optional[str] = typer.Option(None, help="BCC recipients"),
     attach: Optional[list[str]] = typer.Option(None, "--attach", "-f", help="File paths to attach"),
     sign: bool = typer.Option(True, "--sign/--no-sign", help="Append Gmail signature"),
+    from_name: Optional[str] = typer.Option(None, "--from-name", help="Display name override for the From header (email stays the authenticated address)"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Google account name"),
 ):
     """Send an email via Gmail. Body defaults to markdown; pass --html for raw HTML or --no-markdown for plain text."""
@@ -506,7 +508,7 @@ def gmail_send(
     plain, body_html = _resolve_body_format(body, markdown, html)
     client = GmailClient(account=account)
     final_html = _apply_signature(client, plain, body_html) if sign else body_html
-    result = client.send(to=to, subject=subject, body=plain, html=final_html, cc=cc, bcc=bcc, attachments=attach)
+    result = client.send(to=to, subject=subject, body=plain, html=final_html, cc=cc, bcc=bcc, attachments=attach, from_name=from_name)
     print(json.dumps(result, indent=2))
 
 @gmail_app.command("archive")
